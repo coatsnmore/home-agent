@@ -6,3 +6,9 @@ node_modules
 .env.production.local
 
 venv
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so

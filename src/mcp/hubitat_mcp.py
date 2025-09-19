@@ -1,6 +1,6 @@
 import os
 import json
-from mcp.server import FastMCP
+from fastmcp import FastMCP
 from dotenv import load_dotenv
 import requests
 
@@ -95,5 +95,10 @@ def control_device(device_id, command):
     print(f"Command '{command}' sent to device ID {device_id} - Status: {status}")
     return json.dumps({"status": status}, indent=2)
 
-# Run the server with SSE transport
-mcp.run(transport="sse")
+def main():
+    """Main entry point for the hubitat MCP server."""
+    # Start the server
+    mcp.run(transport="streamable-http", port=8888)
+
+if __name__ == "__main__":
+    main()

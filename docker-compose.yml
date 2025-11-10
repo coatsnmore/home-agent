@@ -10,6 +10,25 @@ volumes:
   open-webui:
     driver: local
 services:
+  # piper:
+  #   image: lscr.io/linuxserver/piper:latest
+  #   container_name: piper
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=Etc/UTC
+  #     - PIPER_VOICE=en_US-lessac-medium
+  #     - LOCAL_ONLY= #optional
+  #     - PIPER_LENGTH=1.0 #optional
+  #     - PIPER_NOISE=0.667 #optional
+  #     - PIPER_NOISEW=0.333 #optional
+  #     - PIPER_SPEAKER=0 #optional
+  #     - STREAMING= #optional
+  #   volumes:
+  #     - /path/to/piper/data:/config
+  #   ports:
+  #     - 10200:10200
+  #   restart: unless-stopped
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     pull_policy: always
@@ -23,30 +42,30 @@ services:
     volumes:
       - open-webui:/app/backend/data
     restart: unless-stopped
-  ollama:
-    image: ollama/ollama
-    pull_policy: always
-    networks:
-      - ollama-network
-    container_name: ollama
-    # mem_limit: 2g  # Limit container memory usage to 2 GiB
-    # mem_reservation: 1g  # Reserve 1 GiB of memory for the container
-    ports:
-      - 11434:11434
-    volumes:
-      - ollama:/root/.ollama
-    command:
-      - serve
-    deploy:
-      resources:
-        limits:
-          memory: 64g
-        # reservations:
-        #   devices:
-        #     - driver: nvidia
-        #       count: all
-        #       capabilities: [gpu]
-    restart: unless-stopped
+  # ollama:
+  #   image: ollama/ollama
+  #   pull_policy: always
+  #   networks:
+  #     - ollama-network
+  #   container_name: ollama
+  #   # mem_limit: 2g  # Limit container memory usage to 2 GiB
+  #   # mem_reservation: 1g  # Reserve 1 GiB of memory for the container
+  #   ports:
+  #     - 11435:11434
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   command:
+  #     - serve
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 64g
+  #       # reservations:
+  #       #   devices:
+  #       #     - driver: nvidia
+  #       #       count: all
+  #       #       capabilities: [gpu]
+  #   restart: unless-stopped
   # agent:
   #   build:
   #     context: .

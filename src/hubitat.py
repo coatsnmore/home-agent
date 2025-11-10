@@ -7,6 +7,7 @@ from mcp import stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
 # Use the shared common_llm package
 from agents.llm_provider import get_model
+from mcp.client.streamable_http import streamablehttp_client
 # from strands_tools.browser import LocalChromiumBrowser
 
 import os
@@ -17,7 +18,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # For Windows - Spotify MCP Server:# Connect to an MCP server using SSE transport
-hubitat_mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
+# hubitat_mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
+hubitat_mcp_client = MCPClient(lambda: streamablehttp_client("http://localhost:8888/mcp"))
 
 # # Create an agent with MCP tools
 # with hubitat_mcp_client:
@@ -25,7 +27,7 @@ hubitat_mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
 #     tools = hubitat_mcp_client.list_tools_sync()
 
 # Create model via llm_provider; set LLM_PROVIDER env var to 'openrouter' to use OpenRouter/OpenAI
-model = get_model(provider="openai")
+model = get_model(provider="ollama")
 
 def listen_and_transcribe():
     recognizer = sr.Recognizer()

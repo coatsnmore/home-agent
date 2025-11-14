@@ -14,6 +14,8 @@ import os
 import speech_recognition as sr
 import threading
 from dotenv import load_dotenv
+import pyttsx3
+
 
 load_dotenv()
 
@@ -28,6 +30,21 @@ hubitat_mcp_client = MCPClient(lambda: streamablehttp_client("http://localhost:8
 
 # Create model via llm_provider; set LLM_PROVIDER env var to 'openrouter' to use OpenRouter/OpenAI
 model = get_model(provider="ollama")
+
+# Initialize TTS engine
+tts_engine = pyttsx3.init()
+
+def text_to_speech(text):
+    """Convert text to speech using pyttsx3."""
+    if not text or not text.strip():
+        print("⚠️  No text to speak")
+        return
+    try:
+        # print(f"🔊 Speaking: {text[:100]}{'...' if len(text) > 100 else ''}")
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+    except Exception as e:
+        print(f"⚠️  Error with text-to-speech: {e}")
 
 def listen_and_transcribe():
     recognizer = sr.Recognizer()
@@ -81,10 +98,12 @@ def interactive_agent():
             # system_prompt="You are a personal AWS (Amazon Web Services) Strands agent running on a host machine named Adena. You have access to specific tools and general knowledge. You have access to the following tool(s): `file_read`, `file_write`, `calculator`. You can use these tools to assist the user. Reply concisely and to the point."
         )
         agent("Tell me what tools you have access to.")
+
+        SPEAK=False
     
         while True:
             try:
-                user_prompt = input("\n💬 You (or type 'voice'): ").strip()
+                user_prompt = input("\n💬 You (or type 'voice', 'speak', 'nospeak','stop'): ").strip()
                 if user_prompt.lower() in ['quit', 'exit', 'bye', 'q']:
                     print("👋 Goodbye! Thanks for chatting!")
                     break
@@ -92,11 +111,25 @@ def interactive_agent():
                     user_prompt = listen_and_transcribe()
                     if not user_prompt:
                         continue
+                if user_prompt.lower() == 'speak':
+                    SPEAK=True
+                    print("🔊 Speaking is now enabled.")
+                    continue
+                if user_prompt.lower() == 'nospeak':
+                    SPEAK=False
+                    print("🔊 Speaking is now disabled.")
+                    continue
+                if user_prompt.lower() == 'stop':
+                    break
                 if not user_prompt:
                     print("Please enter a prompt.")
                     continue
                 print("\n🤖 Agent: ", end="")
                 response = agent(user_prompt)
+                response_text = str(response)     
+
+                if SPEAK:
+                    text_to_speech(text=response_text)
             except KeyboardInterrupt:
                 print("\n\n👋 Session interrupted. Goodbye!")
                 break

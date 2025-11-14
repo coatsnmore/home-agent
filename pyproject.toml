@@ -6,13 +6,15 @@ requires-python = ">=3.12"
 
 dependencies = [
     "strands-agents[a2a,ollama,openai]==1.9.0",
-    "strands-agents-tools[a2a_client, mcp]==0.2.8",
+    "strands-agents-tools[a2a_client]==0.2.8",
     "python-dotenv",
     "SpeechRecognition",
     "PyAudio",
     "mcp>=1.12.3",
     "fastmcp>=1.0",
     "requests>=2.32.4",
+    "websockets>=12.0",
+    "pyttsx3>=2.99",
 ]
 
 [project.scripts]

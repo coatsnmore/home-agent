@@ -1,7 +1,6 @@
 // Service Worker for Home Agent PWA
 const CACHE_NAME = 'home-agent-v1';
 const urlsToCache = [
-  '/',
   '/index.html',
   '/src/main.js',
   '/src/style.css',

@@ -35,6 +35,7 @@ const inputContainer = document.createElement('div')
 const messageInput = document.createElement('input')
 const submitButton = document.createElement('button')
 const micButton = document.createElement('button')
+const ttsButton = document.createElement('button')
 const statusIndicator = document.createElement('div')
 
 // Setup UI
@@ -49,11 +50,15 @@ submitButton.className = 'submit-button'
 micButton.innerHTML = '🎤'
 micButton.className = 'mic-button'
 micButton.title = 'Start voice input'
+ttsButton.innerHTML = '🔇'
+ttsButton.className = 'tts-button'
+ttsButton.title = 'Enable text-to-speech (click to toggle)'
 statusIndicator.className = 'status-indicator'
 
 inputContainer.appendChild(micButton)
 inputContainer.appendChild(messageInput)
 inputContainer.appendChild(submitButton)
+inputContainer.appendChild(ttsButton)
 chatContainer.appendChild(statusIndicator)
 chatContainer.appendChild(messagesContainer)
 chatContainer.appendChild(inputContainer)
@@ -66,6 +71,11 @@ function addMessage(text, isUser = false) {
   messageDiv.textContent = text
   messagesContainer.appendChild(messageDiv)
   messagesContainer.scrollTop = messagesContainer.scrollHeight
+  
+  // Auto-speak agent messages if TTS is enabled
+  if (!isUser && ttsEnabled && ttsInitialized && text.trim()) {
+    speakText(text)
+  }
 }
 
 // Update connection status
@@ -318,6 +328,10 @@ async function sendMessage() {
       // Remove streaming class when done
       if (responseDiv) {
         responseDiv.className = 'message agent-message'
+        // Speak the final response if TTS is enabled
+        if (fullResponse && ttsEnabled && ttsInitialized) {
+          speakText(fullResponse)
+        }
       }
     } catch (streamError) {
       // If streaming fails, fall back to non-streaming
@@ -416,6 +430,14 @@ let buffers = []
 let ctx, src, proc, stream
 let lastSpeechTS = 0
 
+// ===== Text-to-Speech Integration (Offline) =====
+let tts = null
+let ttsInitialized = false
+let ttsEnabled = false
+let ttsAudioContext = null
+let ttsIsSpeaking = false
+let ttsQueue = []
+
 // Tunables (from original code)
 const MIN_SEG_SECONDS = 1.0
 const MIN_RMS = 0.001
@@ -462,6 +484,7 @@ async function initializeSTT() {
         const transformersModule = await import("https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js")
         window.transformersPipeline = transformersModule.pipeline
         window.transformersEnv = transformersModule.env
+        window.transformersTensor = transformersModule.Tensor
         window.transformersReady = true
         console.log('Successfully loaded transformers from CDN')
       } catch (cdnError) {
@@ -522,9 +545,9 @@ async function initializeSTT() {
     
     console.log('Whisper model loaded successfully')
     addMessage('Speech recognition ready! Click the microphone to start.', false)
-    micButton.disabled = false
-    micButton.innerHTML = '🎤'
-    micButton.title = 'Start voice input'
+  micButton.disabled = false
+  micButton.innerHTML = '🎤'
+  micButton.title = 'Start voice input'
   } catch (error) {
     console.error('Failed to load STT model:', error)
     console.error('Error details:', error.stack)
@@ -532,6 +555,286 @@ async function initializeSTT() {
     micButton.disabled = true
     micButton.innerHTML = '🎤'
     micButton.title = 'Speech recognition unavailable'
+  }
+}
+
+// Initialize TTS model using transformers.js (fully offline)
+async function initializeTTS() {
+  if (ttsInitialized) return
+  
+  try {
+    addMessage('Loading text-to-speech model... (this may take a moment)', false)
+    ttsButton.innerHTML = '⏳'
+    ttsButton.title = 'Loading TTS model...'
+    console.log('Initializing TTS model...')
+    
+    // Ensure transformers is loaded
+    if (!window.transformersPipeline) {
+      console.log('Transformers not loaded yet, waiting...')
+      let waitCount = 0
+      while (!window.transformersPipeline && waitCount < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        waitCount++
+      }
+      if (!window.transformersPipeline) {
+        throw new Error('Transformers pipeline not available')
+      }
+    }
+    
+    const pipeline = window.transformersPipeline
+    const env = window.transformersEnv
+    
+    // Configure transformers environment (same as STT)
+    if (env) {
+      env.allowLocalModels = false
+      if (import.meta.env.DEV) {
+        env.remoteURL = '/hf'
+        console.log('Using Vite proxy for HuggingFace in development')
+      } else {
+        env.remoteURL = 'https://huggingface.co'
+      }
+    }
+    
+    console.log('Loading TTS model (this may take a moment on first load)...')
+    console.log('Model will be cached for offline use after first download')
+    
+    // Load TTS model using text-to-audio pipeline - fully offline after first download
+    // Using a lightweight model that works well offline
+    try {
+      // Use text-to-audio pipeline with a quantized model
+      tts = await pipeline("text-to-audio", "Xenova/mms-tts-eng", {
+        quantized: true,
+      })
+    } catch (quantizedError) {
+      console.warn('Quantized TTS model failed, trying non-quantized:', quantizedError)
+      // Fallback to non-quantized
+      try {
+        tts = await pipeline("text-to-audio", "Xenova/mms-tts-eng", {
+          quantized: false,
+        })
+      } catch (fallbackError) {
+        // Try alternative model if mms-tts-eng doesn't work
+        console.warn('mms-tts-eng failed, trying speecht5:', fallbackError)
+        tts = await pipeline("text-to-audio", "Xenova/speecht5_tts", {
+          quantized: false,
+        })
+      }
+    }
+    
+    // Initialize audio context for playback
+    ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)()
+    
+    console.log('TTS model loaded successfully')
+    ttsInitialized = true
+    ttsButton.disabled = false
+    ttsButton.innerHTML = '🔇'
+    ttsButton.title = 'Text-to-speech ready (click to enable)'
+    addMessage('Text-to-speech ready! Click the speaker button to enable.', false)
+    
+  } catch (error) {
+    console.error('Failed to initialize TTS:', error)
+    console.error('Error details:', error.stack)
+    addMessage(`Text-to-speech unavailable: ${error.message}`, false)
+    ttsButton.disabled = true
+    ttsButton.innerHTML = '🔇'
+    ttsButton.title = 'Text-to-speech unavailable'
+  }
+}
+
+// Speak text using transformers.js TTS (fully offline)
+async function speakText(text) {
+  if (!ttsEnabled || !ttsInitialized || !tts) return
+  
+  // Clean text - remove markdown, URLs, etc. for better TTS
+  const cleanText = text
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove markdown links
+    .replace(/https?:\/\/[^\s]+/g, '') // Remove URLs
+    .replace(/\*\*([^\*]+)\*\*/g, '$1') // Remove bold markdown
+    .replace(/\*([^\*]+)\*/g, '$1') // Remove italic markdown
+    .replace(/#{1,6}\s+/g, '') // Remove markdown headers
+    .trim()
+  
+  if (!cleanText) return
+  
+  // Limit text length to prevent very long generation times
+  const maxLength = 500
+  const textToSpeak = cleanText.length > maxLength 
+    ? cleanText.substring(0, maxLength) + '...' 
+    : cleanText
+  
+  // Add to queue and process
+  ttsQueue.push(textToSpeak)
+  processTTSQueue()
+}
+
+// Process TTS queue to prevent overlapping speech
+async function processTTSQueue() {
+  if (ttsIsSpeaking || ttsQueue.length === 0) return
+  
+  ttsIsSpeaking = true
+  const text = ttsQueue.shift()
+  
+  try {
+    // Resume audio context if suspended (required for user interaction)
+    if (ttsAudioContext.state === 'suspended') {
+      await ttsAudioContext.resume()
+    }
+    
+    console.log('Generating speech for:', text.substring(0, 50) + '...')
+    
+    // Generate audio in chunks or with timeout to prevent blocking
+    // Use setTimeout to yield to the event loop
+    const audio = await Promise.race([
+      tts(text),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('TTS generation timeout')), 30000)
+      )
+    ])
+    
+    console.log('Audio generated, processing...')
+    
+    // Extract audio data - text-to-audio pipeline returns audio directly
+    let audioData
+    let sampleRate = 16000 // Default sample rate
+    
+    // The text-to-audio pipeline typically returns { audio: Float32Array, sampling_rate: number }
+    if (audio && audio.audio) {
+      audioData = audio.audio
+      sampleRate = audio.sampling_rate || sampleRate
+    } else if (audio && audio.waveform) {
+      audioData = audio.waveform
+      sampleRate = audio.sampling_rate || sampleRate
+    } else if (audio && audio.data) {
+      audioData = audio.data
+      sampleRate = audio.sample_rate || audio.sampling_rate || sampleRate
+    } else if (Array.isArray(audio)) {
+      audioData = new Float32Array(audio)
+    } else if (audio) {
+      // Try to extract from tensor if it's a tensor
+      let Tensor
+      if (window.transformersTensor) {
+        Tensor = window.transformersTensor
+      } else {
+        const transformersModule = await import("https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js")
+        Tensor = transformersModule.Tensor
+        window.transformersTensor = Tensor
+      }
+      if (audio instanceof Tensor) {
+        audioData = audio.data
+      } else {
+        console.error('Unknown audio format:', audio)
+        throw new Error('Unknown audio format')
+      }
+    } else {
+      console.error('No audio data found in response:', audio)
+      throw new Error('No audio data in TTS response')
+    }
+    
+    // Ensure audioData is a Float32Array
+    if (!(audioData instanceof Float32Array)) {
+      audioData = new Float32Array(audioData)
+    }
+    
+    // Efficient normalization - find max in chunks to avoid blocking
+    let maxVal = 0
+    const chunkSize = 10000
+    for (let i = 0; i < audioData.length; i += chunkSize) {
+      const end = Math.min(i + chunkSize, audioData.length)
+      let chunkMax = 0
+      for (let j = i; j < end; j++) {
+        const abs = Math.abs(audioData[j])
+        if (abs > chunkMax) chunkMax = abs
+      }
+      if (chunkMax > maxVal) maxVal = chunkMax
+    }
+    
+    // Normalize if needed (but don't over-normalize quiet audio)
+    if (maxVal > 1.0) {
+      for (let i = 0; i < audioData.length; i++) {
+        audioData[i] = audioData[i] / maxVal
+      }
+    } else if (maxVal > 0 && maxVal < 0.1) {
+      // Boost quiet audio slightly
+      for (let i = 0; i < audioData.length; i++) {
+        audioData[i] = audioData[i] * (0.5 / maxVal)
+      }
+    }
+    
+    // Ensure sample rate is reasonable
+    if (sampleRate < 8000 || sampleRate > 48000) {
+      console.warn('Unusual sample rate:', sampleRate, 'using 16000')
+      sampleRate = 16000
+    }
+    
+    // Convert to AudioBuffer and play
+    const audioBuffer = ttsAudioContext.createBuffer(
+      1, // mono
+      audioData.length,
+      sampleRate
+    )
+    const channelData = audioBuffer.getChannelData(0)
+    channelData.set(audioData)
+    
+    const source = ttsAudioContext.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(ttsAudioContext.destination)
+    
+    // Handle playback completion
+    source.onended = () => {
+      console.log('Speech playback completed')
+      ttsIsSpeaking = false
+      // Process next item in queue
+      if (ttsQueue.length > 0) {
+        setTimeout(() => processTTSQueue(), 100)
+      }
+    }
+    
+    source.onerror = (error) => {
+      console.error('Audio playback error:', error)
+      ttsIsSpeaking = false
+      if (ttsQueue.length > 0) {
+        setTimeout(() => processTTSQueue(), 100)
+      }
+    }
+    
+    source.start(0)
+    console.log('Speech playback started, length:', audioData.length, 'samples, rate:', sampleRate)
+    
+  } catch (error) {
+    console.error('TTS error:', error)
+    console.error('Error details:', error.stack)
+    ttsIsSpeaking = false
+    
+    // Don't show error to user for every failure, just log it
+    // Try to process next item in queue
+    if (ttsQueue.length > 0) {
+      setTimeout(() => processTTSQueue(), 1000)
+    }
+  }
+}
+
+// Toggle TTS on/off
+ttsButton.onclick = () => {
+  if (!ttsInitialized) {
+    addMessage('TTS not initialized yet. Please wait...', false)
+    return
+  }
+  
+  ttsEnabled = !ttsEnabled
+  if (ttsEnabled) {
+    ttsButton.innerHTML = '🔊'
+    ttsButton.title = 'Text-to-speech enabled (click to disable)'
+    ttsButton.classList.add('enabled')
+  } else {
+    ttsButton.innerHTML = '🔇'
+    ttsButton.title = 'Text-to-speech disabled (click to enable)'
+    ttsButton.classList.remove('enabled')
+    // Clear queue and stop any current audio
+    ttsQueue = []
+    ttsIsSpeaking = false
+    if (ttsAudioContext && ttsAudioContext.state !== 'closed') {
+      ttsAudioContext.suspend().then(() => ttsAudioContext.resume())
+    }
   }
 }
 
@@ -668,11 +971,18 @@ micButton.title = 'Initializing...'
 
 // Start initialization
 initializeConnection().then(() => {
-  console.log('A2A connection established, initializing STT...')
-  // Initialize STT immediately (Web Speech API doesn't need async loading)
+  console.log('A2A connection established, initializing STT and TTS...')
+  // Initialize STT and TTS
   initializeSTT()
+  initializeTTS()
 }).catch(err => {
   console.error('Connection initialization error:', err)
-  // Still try to initialize STT even if connection fails
+  // Still try to initialize STT and TTS even if connection fails
   initializeSTT()
+  initializeTTS()
 })
+
+// Initialize TTS button state
+ttsButton.disabled = true
+ttsButton.innerHTML = '⏳'
+ttsButton.title = 'Initializing text-to-speech...'

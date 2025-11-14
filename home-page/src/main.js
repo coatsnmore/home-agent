@@ -1,5 +1,6 @@
 import './style.css'
 import { A2AClient } from '@a2a-js/sdk/client'
+// Note: @xenova/transformers is imported dynamically in initializeSTT()
 
 // Generate UUID using browser's crypto API
 function uuidv4() {
@@ -33,6 +34,7 @@ const messagesContainer = document.createElement('div')
 const inputContainer = document.createElement('div')
 const messageInput = document.createElement('input')
 const submitButton = document.createElement('button')
+const micButton = document.createElement('button')
 const statusIndicator = document.createElement('div')
 
 // Setup UI
@@ -40,12 +42,16 @@ chatContainer.className = 'chat-container'
 messagesContainer.className = 'messages-container'
 inputContainer.className = 'input-container'
 messageInput.type = 'text'
-messageInput.placeholder = 'Type your message...'
+messageInput.placeholder = 'Type your message or use microphone...'
 messageInput.className = 'message-input'
 submitButton.textContent = 'Send'
 submitButton.className = 'submit-button'
+micButton.innerHTML = '🎤'
+micButton.className = 'mic-button'
+micButton.title = 'Start voice input'
 statusIndicator.className = 'status-indicator'
 
+inputContainer.appendChild(micButton)
 inputContainer.appendChild(messageInput)
 inputContainer.appendChild(submitButton)
 chatContainer.appendChild(statusIndicator)
@@ -403,5 +409,270 @@ messageInput.addEventListener('keypress', (e) => {
   }
 })
 
+// ===== Speech-to-Text Integration using Whisper (Offline) =====
+let asr = null
+let rec = false
+let buffers = []
+let ctx, src, proc, stream
+let lastSpeechTS = 0
+
+// Tunables (from original code)
+const MIN_SEG_SECONDS = 1.0
+const MIN_RMS = 0.001
+const VAD_RMS = 0.008
+const VAD_SILENCE_MS = 2000
+
+// Helpers (from original code)
+function resample(data, from, to = 16000) {
+  if (from === to) return data
+  const ratio = to / from
+  const out = new Float32Array(Math.floor(data.length * ratio))
+  for (let i = 0; i < out.length; i++) {
+    const idx = i / ratio
+    const i0 = Math.floor(idx)
+    const i1 = Math.min(i0 + 1, data.length - 1)
+    out[i] = data[i0] + (data[i1] - data[i0]) * (idx - i0)
+  }
+  return out
+}
+
+const rms = a => {
+  let s = 0
+  for (let i = 0; i < a.length; i++) s += a[i] * a[i]
+  return Math.sqrt(s / (a.length || 1))
+}
+
+// Initialize Whisper model
+async function initializeSTT() {
+  try {
+    addMessage('Loading speech recognition model... (this may take a moment)', false)
+    micButton.innerHTML = '⏳'
+    micButton.title = 'Loading speech recognition model...'
+    console.log('Starting Whisper model load...')
+    console.log('Checking for transformers:', {
+      transformersReady: window.transformersReady,
+      transformersPipeline: typeof window.transformersPipeline
+    })
+    
+    // Try to load from CDN dynamically if not already loaded
+    if (!window.transformersPipeline) {
+      console.log('Transformers not found in window, loading from CDN...')
+      try {
+        // https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js
+        const transformersModule = await import("https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js")
+        window.transformersPipeline = transformersModule.pipeline
+        window.transformersEnv = transformersModule.env
+        window.transformersReady = true
+        console.log('Successfully loaded transformers from CDN')
+      } catch (cdnError) {
+        console.error('CDN import failed:', cdnError)
+        throw new Error(`Failed to load transformers from CDN: ${cdnError.message}`)
+      }
+    }
+    
+    // Wait a bit more if still not ready
+    let waitCount = 0
+    while (!window.transformersReady && waitCount < 50) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      waitCount++
+    }
+    
+    if (!window.transformersPipeline) {
+      throw new Error('Transformers pipeline not available after loading attempt')
+    }
+    
+    const pipeline = window.transformersPipeline
+    const env = window.transformersEnv
+    
+    // Configure transformers environment for better compatibility
+    if (env) {
+      // Configure to use HuggingFace through proxy in development
+      env.allowLocalModels = false
+      if (import.meta.env.DEV) {
+        // In development, use Vite proxy to avoid CORS
+        env.remoteURL = '/hf'
+        console.log('Using Vite proxy for HuggingFace in development')
+      } else {
+        // In production, use HuggingFace directly
+        env.remoteURL = 'https://huggingface.co'
+      }
+      console.log('Transformers environment configured:', {
+        remoteURL: env.remoteURL,
+        allowLocalModels: env.allowLocalModels
+      })
+    }
+    
+    console.log('Pipeline obtained, loading Whisper model...')
+    console.log('This may take a moment on first load as the model downloads...')
+    console.log('Model will be cached for offline use after first download')
+    
+    // Load the model - use quantized version for faster download and smaller size
+    // The model files will be cached in IndexedDB for offline use
+    try {
+      asr = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {
+        quantized: true, // Use quantized model (smaller, faster)
+      })
+    } catch (quantizedError) {
+      console.warn('Quantized model failed, trying non-quantized:', quantizedError)
+      // Fallback to non-quantized if quantized fails
+      asr = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {
+        quantized: false,
+      })
+    }
+    
+    console.log('Whisper model loaded successfully')
+    addMessage('Speech recognition ready! Click the microphone to start.', false)
+    micButton.disabled = false
+    micButton.innerHTML = '🎤'
+    micButton.title = 'Start voice input'
+  } catch (error) {
+    console.error('Failed to load STT model:', error)
+    console.error('Error details:', error.stack)
+    addMessage(`Speech recognition unavailable: ${error.message}. You can still type messages.`, false)
+    micButton.disabled = true
+    micButton.innerHTML = '🎤'
+    micButton.title = 'Speech recognition unavailable'
+  }
+}
+
+async function doStartRecording() {
+  try {
+    rec = true
+    buffers = []
+    lastSpeechTS = performance.now()
+    
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    ctx = new AudioContext()
+    src = ctx.createMediaStreamSource(stream)
+    proc = ctx.createScriptProcessor(4096, 1, 1)
+    
+    proc.onaudioprocess = e => {
+      if (!rec) return
+      
+      const ch = e.inputBuffer.getChannelData(0)
+      buffers.push(new Float32Array(ch))
+      
+      // Simple energy-based VAD per frame
+      if (rms(ch) >= VAD_RMS) {
+        lastSpeechTS = performance.now()
+      } else if (performance.now() - lastSpeechTS > VAD_SILENCE_MS) {
+        // Auto-stop after silence
+        doStopRecording()
+      }
+    }
+    
+    src.connect(proc)
+    proc.connect(ctx.destination)
+    
+    micButton.classList.add('recording')
+    micButton.innerHTML = '🔴'
+    micButton.title = 'Recording... (auto-stops after silence)'
+    micButton.disabled = false
+    messageInput.disabled = true
+    submitButton.disabled = true
+  } catch (error) {
+    console.error('Failed to start recording:', error)
+    addMessage('Failed to access microphone. Please check permissions.', false)
+    rec = false
+    micButton.classList.remove('recording')
+    micButton.innerHTML = '🎤'
+  }
+}
+
+async function doStopRecording() {
+  if (!rec) return
+  
+  rec = false
+  micButton.classList.remove('recording')
+  micButton.innerHTML = '🎤'
+  micButton.title = 'Start voice input'
+  micButton.disabled = true
+  messageInput.disabled = false
+  
+  try {
+    proc.disconnect()
+  } catch {}
+  try {
+    src.disconnect()
+  } catch {}
+  try {
+    stream.getTracks().forEach(t => t.stop())
+  } catch {}
+  try {
+    await ctx.close()
+  } catch {}
+  
+  // Process audio
+  let total = 0
+  for (const b of buffers) total += b.length
+  
+  const mono = new Float32Array(total)
+  let off = 0
+  for (const b of buffers) {
+    mono.set(b, off)
+    off += b.length
+  }
+  
+  // Resample and quick gating
+  const pcm = resample(mono, ctx.sampleRate)
+  const duration = pcm.length / 16000
+  const energy = rms(pcm)
+  
+  // Skip blank/short/low-energy segments
+  if (duration < MIN_SEG_SECONDS || energy < MIN_RMS) {
+    addMessage('(No speech detected, try again)', false)
+    micButton.disabled = false
+    submitButton.disabled = false
+    return
+  }
+  
+  // Run Whisper
+  try {
+    addMessage('(Processing speech...)', false)
+    const result = await asr(pcm)
+    const text = (result.text || "").trim()
+    
+    if (text) {
+      // Put transcribed text in input field
+      messageInput.value = text
+      messageInput.focus()
+    } else {
+      addMessage('(No text recognized, try again)', false)
+    }
+  } catch (error) {
+    console.error('STT error:', error)
+    addMessage('(Speech recognition error, please try again)', false)
+  }
+  
+  micButton.disabled = false
+  submitButton.disabled = false
+}
+
+// Wire microphone button
+micButton.onclick = () => {
+  if (!asr) {
+    addMessage('Speech recognition model not loaded yet. Please wait...', false)
+    return
+  }
+  if (rec) {
+    doStopRecording()
+  } else {
+    doStartRecording()
+  }
+}
+
 // Initialize on load
-initializeConnection()
+micButton.disabled = true
+micButton.innerHTML = '⏳'
+micButton.title = 'Initializing...'
+
+// Start initialization
+initializeConnection().then(() => {
+  console.log('A2A connection established, initializing STT...')
+  // Initialize STT immediately (Web Speech API doesn't need async loading)
+  initializeSTT()
+}).catch(err => {
+  console.error('Connection initialization error:', err)
+  // Still try to initialize STT even if connection fails
+  initializeSTT()
+})

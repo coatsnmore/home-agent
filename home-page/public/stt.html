@@ -1,0 +1,121 @@
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Whisper STT</title>
+</head>
+<body>
+
+<button id="start">Start</button>
+<button id="stop" disabled>Stop</button>
+<pre id="text" style="white-space:pre-wrap;margin-top:1em;"></pre>
+
+<script type="module">
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js";
+
+let rec = false, buffers = [], ctx, src, proc, stream;
+let asr = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en");
+
+// ---- Tunables ----
+/*
+const MIN_SEG_SECONDS = 0.6;     // skip segments shorter than this
+const MIN_RMS = 0.01;            // skip segments with overall RMS below this
+const VAD_RMS = 0.008;           // frame RMS to consider "speech present"
+const VAD_SILENCE_MS = 1000;     // stop after this long with no speech
+*/
+const MIN_SEG_SECONDS = 1.0;     // skip segments shorter than this
+const MIN_RMS = 0.001;            // skip segments with overall RMS below this
+const VAD_RMS = 0.008;           // frame RMS to consider "speech present"
+const VAD_SILENCE_MS = 2000;     // stop after this long with no speech
+
+
+// ---- Helpers ----
+function resample(data, from, to = 16000) {
+  if (from === to) return data;
+  const ratio = to / from, out = new Float32Array(Math.floor(data.length * ratio));
+  for (let i = 0; i < out.length; i++) {
+    const idx = i / ratio, i0 = Math.floor(idx), i1 = Math.min(i0 + 1, data.length - 1);
+    out[i] = data[i0] + (data[i1] - data[i0]) * (idx - i0);
+  }
+  return out;
+}
+const rms = a => {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i]*a[i];
+  return Math.sqrt(s / (a.length || 1));
+};
+
+// ---- UI ----
+const startBtn = document.getElementById("start");
+const stopBtn  = document.getElementById("stop");
+
+// VAD state
+let lastSpeechTS = 0;
+
+async function doStart() {
+  rec = true; buffers = []; lastSpeechTS = performance.now();
+  stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  ctx = new AudioContext();
+  src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(4096,1,1);
+  proc.onaudioprocess = e => {
+    if (!rec) return;
+    const ch = e.inputBuffer.getChannelData(0);
+    buffers.push(new Float32Array(ch)); // keep raw buffer
+
+    // simple energy-based VAD per frame
+    if (rms(ch) >= VAD_RMS) lastSpeechTS = performance.now();
+    else if (performance.now() - lastSpeechTS > VAD_SILENCE_MS) {
+      // simulate user pressing Stop after 1s of silence
+      stopBtn.click();
+    }
+  };
+  src.connect(proc); proc.connect(ctx.destination);
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+}
+
+async function doStop() {
+  rec = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  try { proc.disconnect(); } catch {}
+  try { src.disconnect(); } catch {}
+  try { stream.getTracks().forEach(t=>t.stop()); } catch {}
+  try { await ctx.close(); } catch {}
+
+  // concat audio
+  let total = 0; for (const b of buffers) total += b.length;
+  const mono = new Float32Array(total);
+  let off = 0; for (const b of buffers) { mono.set(b, off); off += b.length; }
+
+  // resample and quick gating
+  const pcm = resample(mono, ctx.sampleRate);
+  const duration = pcm.length / 16000;
+  const energy = rms(pcm);
+
+  // --- Skip blank/short/low-energy segments (no Whisper call) ---
+  if (duration < MIN_SEG_SECONDS || energy < MIN_RMS) {
+    // immediately start the next segment
+    doStart();
+    return;
+  }
+
+  // run Whisper
+  const result = await asr(pcm);
+  const text = (result.text || "").trim();
+  if (text) document.getElementById("text").textContent += text + "\n";
+
+  // immediately start the next segment
+  doStart();
+}
+
+// wire buttons
+startBtn.onclick = doStart;
+stopBtn.onclick  = doStop;
+</script>
+
+</body>
+</html>

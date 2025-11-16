@@ -35,6 +35,11 @@ export default defineConfig({
     // Or use specific host: '0.0.0.0' to bind to all interfaces
     port: 5173, // Default Vite port (optional, for clarity)
     // https: getHttpsOptions(), // Enable HTTPS for secure context (required for microphone access)
+    allowedHosts: [
+      'localhost',
+      'home-page', // Docker service name
+      '.local', // Allow all .local domains
+    ],
     proxy: {
       // Proxy requests to the A2A server to avoid CORS issues
       // '/api/a2a': {

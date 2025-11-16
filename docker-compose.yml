@@ -72,7 +72,7 @@ services:
       dockerfile: uv.Dockerfile
     image: hubitat-agent:dev
     env_file: 
-        - .env.docker
+        - .env
     container_name: hubitat-agent
     depends_on:
       - hubitat-mcp
@@ -99,7 +99,7 @@ services:
       dockerfile: uv.Dockerfile
     image: hubitat-mcp:dev
     env_file: 
-        - .env.docker
+        - .env
     container_name: hubitat-mcp
     networks:
       - ollama-network
@@ -113,11 +113,11 @@ services:
     restart: unless-stopped
   home-page:
     build:
-      context: .
-      dockerfile: home-page/node.Dockerfile
+      context: ./home-page
+      dockerfile: node.Dockerfile
     image: home-page:dev
     env_file: 
-        - .env.docker
+        - .env
     container_name: home-page
     depends_on:
       - hubitat-agent
@@ -129,4 +129,24 @@ services:
     ports:
       - "5173:5173"
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    restart: unless-stopped
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: nginx-ssl:dev
+    container_name: nginx-ssl
+    depends_on:
+      - hubitat-agent
+      - hubitat-mcp
+      - home-page
+    networks:
+      - ollama-network
+    ports:
+      - "80:80"    # HTTP - redirects to HTTPS
+      - "443:443"   # HTTPS - main entry point
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl  # Writable so certs can be generated on startup
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certbot:/var/www/certbot:ro
     restart: unless-stopped

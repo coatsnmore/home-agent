@@ -2,9 +2,40 @@ import './style.css'
 import { A2AClient } from '@a2a-js/sdk/client'
 // Note: @xenova/transformers is imported dynamically in initializeSTT()
 
-// Generate UUID using browser's crypto API
+// Generate UUID using browser's crypto API with fallback
 function uuidv4() {
-  return crypto.randomUUID()
+  // Use native crypto.randomUUID if available (modern browsers)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  
+  // Fallback: Use crypto.getRandomValues if available (more secure)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    // Set version (4) and variant bits
+    bytes[6] = (bytes[6] & 0x0f) | 0x40 // Version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80 // Variant 10
+    
+    // Convert to UUID string format
+    const hex = Array.from(bytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+    return [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20, 32)
+    ].join('-')
+  }
+  
+  // Final fallback: Use Math.random (less secure, but works everywhere)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
 }
 
 // Initialize A2A client - connect to home agent on port 9001
@@ -840,11 +871,30 @@ ttsButton.onclick = () => {
 
 async function doStartRecording() {
   try {
+    // Check if getUserMedia is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Try legacy API as fallback
+      const getUserMedia = navigator.mediaDevices?.getUserMedia ||
+                          navigator.getUserMedia ||
+                          navigator.webkitGetUserMedia ||
+                          navigator.mozGetUserMedia ||
+                          navigator.msGetUserMedia
+      
+      if (!getUserMedia) {
+        throw new Error('Microphone access is not available. Please use HTTPS or localhost, and ensure your browser supports microphone access.')
+      }
+      
+      // Use legacy API with Promise wrapper
+      stream = await new Promise((resolve, reject) => {
+        getUserMedia.call(navigator, { audio: true }, resolve, reject)
+      })
+    } else {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    }
+    
     rec = true
     buffers = []
     lastSpeechTS = performance.now()
-    
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     ctx = new AudioContext()
     src = ctx.createMediaStreamSource(stream)
     proc = ctx.createScriptProcessor(4096, 1, 1)
@@ -875,10 +925,25 @@ async function doStartRecording() {
     submitButton.disabled = true
   } catch (error) {
     console.error('Failed to start recording:', error)
-    addMessage('Failed to access microphone. Please check permissions.', false)
+    let errorMessage = 'Failed to access microphone. '
+    
+    if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+      errorMessage += 'Please allow microphone access in your browser settings.'
+    } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+      errorMessage += 'No microphone found. Please connect a microphone.'
+    } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+      errorMessage += 'Microphone is being used by another application.'
+    } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      errorMessage += 'Microphone access requires HTTPS or localhost. Please use a secure connection.'
+    } else {
+      errorMessage += `Error: ${error.message || 'Unknown error'}`
+    }
+    
+    addMessage(errorMessage, false)
     rec = false
     micButton.classList.remove('recording')
     micButton.innerHTML = '🎤'
+    micButton.title = 'Microphone access failed - click to try again'
   }
 }
 
@@ -964,10 +1029,25 @@ micButton.onclick = () => {
   }
 }
 
+// Check if we're in a secure context for microphone access
+function isSecureContext() {
+  return window.isSecureContext || 
+         location.protocol === 'https:' || 
+         location.hostname === 'localhost' || 
+         location.hostname === '127.0.0.1' ||
+         location.hostname === '[::1]'
+}
+
 // Initialize on load
 micButton.disabled = true
 micButton.innerHTML = '⏳'
 micButton.title = 'Initializing...'
+
+// Warn if not in secure context
+if (!isSecureContext()) {
+  console.warn('Not in secure context - microphone access may not work. Use HTTPS or localhost.')
+  addMessage('⚠️ Microphone access requires HTTPS or localhost. Accessing via IP address may not work.', false)
+}
 
 // Start initialization
 initializeConnection().then(() => {

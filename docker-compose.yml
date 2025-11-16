@@ -29,19 +29,19 @@ services:
   #   ports:
   #     - 10200:10200
   #   restart: unless-stopped
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    pull_policy: always
-    networks:
-      - ollama-network
-    container_name: open-webui
-    ports:
-      - 3000:8080
-    # environment:
-    #   - OLLAMA_BASE_URL=NETWORK_ADDRESS:11434 # for others to consume
-    volumes:
-      - open-webui:/app/backend/data
-    restart: unless-stopped
+  # open-webui:
+  #   image: ghcr.io/open-webui/open-webui:main
+  #   pull_policy: always
+  #   networks:
+  #     - ollama-network
+  #   container_name: open-webui
+  #   ports:
+  #     - 3000:8080
+  #   # environment:
+  #   #   - OLLAMA_BASE_URL=NETWORK_ADDRESS:11434 # for others to consume
+  #   volumes:
+  #     - open-webui:/app/backend/data
+  #   restart: unless-stopped
   # ollama:
   #   image: ollama/ollama
   #   pull_policy: always
@@ -66,23 +66,66 @@ services:
   #       #       count: all
   #       #       capabilities: [gpu]
   #   restart: unless-stopped
-  # agent:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   image: agent:1
-  #   env_file: 
-  #       - .env.docker
-  #   container_name: agent
-  #   networks:
-  #     - ollama-network
-  #   volumes:
-  #     # - .:/app
-  #     - ~/devl/keeping-your-intelligence-local:/app
-  #     # - /app/node_modules     # Prevent overwriting node_modules (if using Node.js)
-  #   # ports:
-  #   #   - "3000:3000"           # Expose a port (e.g., for a web server or API)
-  #   # environment:
-  #   #   - NODE_ENV=development  # Example environment variable (customize for your app)
-  #   command: /bin/bash -c "tail -f /dev/null"
-  #   restart: unless-stopped
+  hubitat-agent:
+    build:
+      context: .
+      dockerfile: uv.Dockerfile
+    image: hubitat-agent:dev
+    env_file: 
+        - .env.docker
+    container_name: hubitat-agent
+    depends_on:
+      - hubitat-mcp
+    networks:
+      - ollama-network
+    volumes:
+      - .:/app
+    ports:
+      - "9002:9002"           # Expose a port (e.g., for a web server or API)
+    environment:
+      - MCP_SERVER_HOST=hubitat-mcp  # Use Docker service name for MCP connection
+      # Use host.docker.internal to access Ollama on host machine (Mac/Windows)
+      # On Linux, use the host's IP address or add 'extra_hosts' below
+      # - OLLAMA_HOST=http://host.docker.internal:11434
+    # For Linux, uncomment this instead:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    command: /app/docker/hubitat-agent.sh
+    restart: unless-stopped
+  hubitat-mcp:
+    build:
+      context: .
+      dockerfile: uv.Dockerfile
+    image: hubitat-mcp:dev
+    env_file: 
+        - .env.docker
+    container_name: hubitat-mcp
+    networks:
+      - ollama-network
+    volumes:
+      - .:/app
+    ports:
+      - "8888:8888"           # Expose a port (e.g., for a web server or API)
+    # environment:
+    #   - NODE_ENV=development  # Example environment variable (customize for your app)
+    command: /app/docker/hubitat-mcp.sh
+    restart: unless-stopped
+  home-page:
+    build:
+      context: .
+      dockerfile: home-page/node.Dockerfile
+    image: home-page:dev
+    env_file: 
+        - .env.docker
+    container_name: home-page
+    depends_on:
+      - hubitat-agent
+    networks:
+      - ollama-network
+    volumes:
+      - .:/app
+    working_dir: /app/home-page
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    restart: unless-stopped

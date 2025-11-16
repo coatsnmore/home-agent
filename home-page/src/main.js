@@ -38,6 +38,19 @@ function uuidv4() {
   })
 }
 
+// Filter out harmless ONNX Runtime warnings about unused initializers
+const originalWarn = console.warn
+console.warn = function(...args) {
+  const message = args.join(' ')
+  // Suppress ONNX Runtime warnings about unused initializers (harmless optimization warnings)
+  if (message.includes('CleanUnusedInitializersAndNodeArgs') || 
+      message.includes('Removing initializer') ||
+      message.includes('It is not used by any node')) {
+    return // Suppress these warnings
+  }
+  originalWarn.apply(console, args)
+}
+
 // Initialize A2A client - connect to home agent on port 9001
 let a2aClient = null
 
@@ -126,9 +139,12 @@ const actualServerUrls = [
   'http://localhost:9001',
   'http://127.0.0.1:9001'
 ]
-const agentCardUrl = isDevelopment 
-  ? '/api/a2a/.well-known/agent-card.json'  // Use Vite proxy in development
-  : 'http://localhost:9002/.well-known/agent-card.json'  // Direct connection in production
+// const agentCardUrl = isDevelopment 
+//   ? '/api/a2a/.well-known/agent-card.json'  // Use Vite proxy in development
+//   : 'http://localhost:9002/.well-known/agent-card.json'  // Direct connection in production
+
+const agentCardUrl = 'http://192.168.86.23:9002/.well-known/agent-card.json'
+
 
 // Create a custom fetch that routes through proxy in development
 function createProxiedFetch() {
@@ -152,11 +168,20 @@ function createProxiedFetch() {
     }
     
     // Check if URL matches any A2A server and replace with proxy
+    // Also handle URLs with 0.0.0.0 (binding address) - should use localhost
     let proxiedUrl = urlString
     let wasProxied = false
+    
+    // Replace 0.0.0.0 with localhost first (0.0.0.0 is a binding address, not a valid URL)
+    if (urlString.includes('0.0.0.0')) {
+      proxiedUrl = urlString.replace(/http:\/\/0\.0\.0\.0:/g, 'http://localhost:')
+      console.log(`[Proxy] Replaced 0.0.0.0 with localhost: ${urlString} → ${proxiedUrl}`)
+    }
+    
+    // Now check if it matches any A2A server URL and proxy it
     for (const serverUrl of actualServerUrls) {
-      if (urlString.startsWith(serverUrl)) {
-        proxiedUrl = urlString.replace(serverUrl, '/api/a2a')
+      if (proxiedUrl.startsWith(serverUrl)) {
+        proxiedUrl = proxiedUrl.replace(serverUrl, '/api/a2a')
         wasProxied = true
         console.log(`[Proxy] Routing ${urlString} → ${proxiedUrl}`)
         break
@@ -223,9 +248,10 @@ async function initializeConnection() {
     }
     
     // Create client from agent card URL with custom fetch for proxy support
-    addMessage('Fetching agent card...', false)
-    const customFetch = createProxiedFetch()
-    a2aClient = await A2AClient.fromCardUrl(agentCardUrl, { fetchImpl: customFetch })
+    addMessage('Fetching agent card from: ' + agentCardUrl, false)
+    // const customFetch = createProxiedFetch()
+    // a2aClient = await A2AClient.fromCardUrl(agentCardUrl, { fetchImpl: customFetch })
+    a2aClient = await A2AClient.fromCardUrl(agentCardUrl)
     
     updateStatus(true)
     addMessage('Connected! You can now chat with the Hubitat Agent.', false)
@@ -235,7 +261,7 @@ async function initializeConnection() {
     let errorMessage = error.message
     if (error.message.includes('Failed to fetch') || error.message.includes('Proxy not available')) {
       errorMessage = 'Failed to connect:\n' +
-        '1. Make sure the A2A server is running on http://localhost:9002\n' +
+        '1. Make sure the A2A server is running on: ' + agentCardUrl + '\n' +
         '2. If in development, restart the Vite dev server (npm run dev)\n' +
         '3. Check browser console for more details'
     }

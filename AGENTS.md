@@ -62,9 +62,9 @@ The system consists of multiple AI agents that work together to provide smart ho
 
 ## Agents
 
-### 1. Interactive Agent (`src/hubitat.py`)
+### 1. Interactive Agent Demo (`src/hubitat.py`)
 
-**Type**: Standalone interactive agent with voice capabilities
+**Type**: Basic Standalone interactive agent with voice capabilities
 
 **Purpose**: Provides a direct user interface for interacting with the smart home system through text or voice input.
 

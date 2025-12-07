@@ -19,3 +19,5 @@ nginx/certbot/
 *.pem
 *.key
 *.crt
+
+.DS_Store

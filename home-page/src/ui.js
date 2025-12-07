@@ -24,6 +24,7 @@ export const messageInput = document.querySelector('#messageInput')
 export const submitButton = document.querySelector('#submitButton')
 export const micButton = document.querySelector('#micButton')
 export const statusIndicator = document.querySelector('.status-indicator')
+export const agentListContainer = document.querySelector('.agent-list-container')
 
 // VAD countdown element (created lazily)
 let vadCountdownEl = null
@@ -144,6 +145,63 @@ export function updateStatus(connected) {
   statusIndicator.className = `status-indicator ${connected ? 'connected' : 'disconnected'}`
   submitButton.disabled = !connected
   messageInput.disabled = !connected
+}
+
+// Update agent list UI
+// agents: array of { id, name, displayName } objects
+export function updateAgentList(agents, activeAgentId) {
+  if (!agentListContainer) return
+  
+  // Clear existing list
+  agentListContainer.innerHTML = ''
+  
+  // Create agent list items
+  agents.forEach(agent => {
+    const agentItem = document.createElement('div')
+    agentItem.className = 'agent-item'
+    agentItem.dataset.agentId = agent.id
+    
+    const agentName = document.createElement('span')
+    agentName.className = 'agent-name'
+    agentName.textContent = agent.displayName || agent.name
+    
+    const agentStatus = document.createElement('span')
+    agentStatus.className = 'agent-status'
+    agentStatus.textContent = '🟢'
+    
+    agentItem.appendChild(agentStatus)
+    agentItem.appendChild(agentName)
+    
+    // Add click handler to switch agents (import dynamically to avoid circular dependency)
+    agentItem.addEventListener('click', async () => {
+      const { switchAgent } = await import('./a2a.js')
+      switchAgent(agent.id)
+    })
+    
+    agentListContainer.appendChild(agentItem)
+  })
+  
+  // Set active agent
+  if (activeAgentId) {
+    setActiveAgent(activeAgentId)
+  }
+}
+
+// Set active agent in UI
+export function setActiveAgent(agentId) {
+  if (!agentListContainer) return
+  
+  // Remove active class from all items
+  const allItems = agentListContainer.querySelectorAll('.agent-item')
+  allItems.forEach(item => {
+    item.classList.remove('active')
+  })
+  
+  // Add active class to current agent
+  const activeItem = agentListContainer.querySelector(`[data-agent-id="${agentId}"]`)
+  if (activeItem) {
+    activeItem.classList.add('active')
+  }
 }
 
 //----------------------------------------------------------------------------

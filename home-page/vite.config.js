@@ -48,17 +48,17 @@ export default defineConfig({
       //   rewrite: (path) => path.replace(/^\/api\/a2a/, ''),
       // },
       // Proxy HuggingFace requests to avoid CORS issues
-      '/hf': {
-        target: 'https://huggingface.co',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/hf/, ''),
-        configure: (proxy, _options) => {
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            // Add CORS headers
-            proxyReq.setHeader('Origin', 'https://huggingface.co')
-          })
-        },
-      },
+      // '/hf': {
+      //   target: 'https://huggingface.co',
+      //   changeOrigin: true,
+      //   rewrite: (path) => path.replace(/^\/hf/, ''),
+      //   configure: (proxy, _options) => {
+      //     proxy.on('proxyReq', (proxyReq, req, _res) => {
+      //       // Add CORS headers
+      //       proxyReq.setHeader('Origin', 'https://huggingface.co')
+      //     })
+      //   },
+      // },
     },
   },
   optimizeDeps: {

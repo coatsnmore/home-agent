@@ -2,24 +2,36 @@
 // This module is executed when imported and exports initialization
 // helpers. It imports UI bindings from ./ui.js so DOM refs are shared.
 
-import { clearUserInput, addMessage, updateStatus, clickSubmitButton, messageInput, submitButton, messagesContainer, micButton } from './ui.js'
+import { clearUserInput, addMessage, updateStatus, clickSubmitButton, messageInput, submitButton, messagesContainer, micButton, updateAgentList, setActiveAgent } from './ui.js'
 import { A2AClient } from '@a2a-js/sdk/client'
 
+// Agent configurations
+const AGENTS = {
+  hubitat: {
+    name: 'Hubitat',
+    displayName: 'Hubitat Agent',
+    cardUrl: '/hubitat/.well-known/agent-card.json',
+    default: true
+  },
+  home: {
+    name: 'Home',
+    displayName: 'Home Agent',
+    cardUrl: '/home/.well-known/agent-card.json',
+    default: false
+  }
+}
+
 // Module-local client and conversation state (exported as live bindings)
-export let contextId = null
+export let contextIds = {} // Separate context IDs per agent
 export let isConnected = false
-let a2aClient = null
+let a2aClients = {} // Separate clients per agent
+let currentAgent = 'hubitat' // Default agent
 
 // Use proxy in development to avoid CORS issues
 const isDevelopment = import.meta.env.DEV
 
 // Detect if we're being served over HTTPS (via nginx proxy)
 const isHttps = window.location.protocol === 'https:'
-
-// Agent card URL - use nginx proxy path when served over HTTPS
-const agentCardUrl = isHttps
-  ? '/agent/.well-known/agent-card.json'
-  : 'http://localhost:9002/.well-known/agent-card.json'
 
 // Server URLs that need to be proxied
 const actualServerUrls = [
@@ -29,140 +41,98 @@ const actualServerUrls = [
   'http://127.0.0.1:9001'
 ]
 
-// Create a custom fetch that routes through proxy to avoid mixed content
-function createProxiedFetch() {
-  return async (url, options = {}) => {
-    let urlString = ''
-    if (typeof url === 'string') {
-      urlString = url
-    } else if (url instanceof Request) {
-      urlString = url.url
-    } else if (url instanceof URL) {
-      urlString = url.toString()
-    } else {
-      urlString = String(url)
-    }
 
-    if (urlString.startsWith('/') || urlString.startsWith('https://')) {
-      return fetch(urlString, options)
-    }
-
-    let proxiedUrl = urlString
-
-    if (urlString.includes('0.0.0.0')) {
-      proxiedUrl = urlString.replace(/http:\/\/0\.0\.0\.0:/g, 'http://localhost:')
-    }
-
-    if (isHttps) {
-      let wasProxied = false
-      for (const serverUrl of actualServerUrls) {
-        if (proxiedUrl.startsWith(serverUrl)) {
-          proxiedUrl = proxiedUrl.replace(serverUrl, '/agent')
-          wasProxied = true
-          console.log(`[Proxy] Routing HTTPS: ${urlString} → ${proxiedUrl}`)
-          break
-        }
-      }
-
-      if (!wasProxied && proxiedUrl.startsWith('http://')) {
-        const urlObj = new URL(proxiedUrl)
-        if (
-          urlObj.hostname === 'localhost' ||
-          urlObj.hostname === '127.0.0.1' ||
-          urlObj.hostname.includes('hubitat-agent') ||
-          urlObj.hostname.includes('hubitat-mcp') ||
-          urlObj.port === '9002' || urlObj.port === '9001'
-        ) {
-          const path = urlObj.pathname + urlObj.search + urlObj.hash
-          proxiedUrl = '/agent' + path
-          console.log(`[Proxy] Routing HTTPS (internal): ${urlString} → ${proxiedUrl}`)
-        }
-      }
-    } else {
-      for (const serverUrl of actualServerUrls) {
-        if (proxiedUrl.startsWith(serverUrl)) {
-          proxiedUrl = proxiedUrl.replace(serverUrl, '/api/a2a')
-          console.log(`[Proxy] Routing HTTP: ${urlString} → ${proxiedUrl}`)
-          break
-        }
-      }
-    }
-
-    if (proxiedUrl !== urlString && url instanceof Request) {
-      const clonedRequest = url.clone()
-      const headers = new Headers(clonedRequest.headers)
-      let body = null
-      try {
-        if (clonedRequest.body) {
-          const contentType = clonedRequest.headers.get('content-type') || ''
-          if (contentType.includes('application/json') || contentType.includes('text/')) {
-            body = await clonedRequest.text()
-          } else {
-            body = await clonedRequest.arrayBuffer()
-          }
-        }
-      } catch (e) {
-        console.warn('Could not read request body:', e)
-      }
-
-      return fetch(proxiedUrl, {
-        method: clonedRequest.method,
-        headers: headers,
-        body: body,
-        mode: 'cors',
-        credentials: 'omit',
-        cache: 'no-cache',
-        redirect: clonedRequest.redirect,
-        ...options
-      })
-    }
-
-    return fetch(proxiedUrl, options)
+// Parse @mentions from message text
+function parseMention(messageText) {
+  // Match @agentname at the start, optionally followed by a message
+  const mentionMatch = messageText.match(/^@(\w+)(?:\s+(.+))?$/)
+  if (mentionMatch) {
+    const agentName = mentionMatch[1].toLowerCase()
+    const remainingText = mentionMatch[2] || ''
+    return { agentName, messageText: remainingText }
   }
+  return { agentName: null, messageText }
 }
 
-// Initialize connection
+// Initialize connection to all agents
 export async function initializeConnection() {
   try {
     updateStatus(false)
     isConnected = false
-    addMessage('Connecting to Hubitat Agent...', false)
+    addMessage('Connecting to agents...', false)
 
-    if (isDevelopment && !isHttps) {
-      addMessage('Testing proxy connection...', false)
+    const connectedAgents = []
+    const failedAgents = []
+
+    // Connect to all agents
+    for (const [agentId, agentConfig] of Object.entries(AGENTS)) {
       try {
-        const testResponse = await fetch('/api/a2a/.well-known/agent-card.json')
-        if (!testResponse.ok) {
-          throw new Error(`Proxy test failed: HTTP ${testResponse.status}`)
-        }
-        addMessage('Proxy is working!', false)
-      } catch (proxyError) {
-        console.error('Proxy test failed:', proxyError)
-        addMessage('Warning: Proxy test failed. Make sure Vite dev server is running and vite.config.js is loaded.', false)
-        throw new Error('Proxy not available. Please restart the Vite dev server.')
+        addMessage(`Connecting to ${agentConfig.displayName}...`, false)
+        const client = await A2AClient.fromCardUrl(agentConfig.cardUrl)
+        a2aClients[agentId] = client
+        contextIds[agentId] = null
+        connectedAgents.push({
+          id: agentId,
+          name: agentConfig.name,
+          displayName: agentConfig.displayName
+        })
+        addMessage(`✓ Connected to ${agentConfig.displayName}`, false)
+      } catch (error) {
+        console.error(`Failed to connect to ${agentConfig.displayName}:`, error)
+        failedAgents.push(agentConfig)
+        addMessage(`✗ Failed to connect to ${agentConfig.displayName}`, false)
       }
     }
 
-    addMessage('Fetching agent card from: ' + agentCardUrl, false)
-    const customFetch = createProxiedFetch()
-    a2aClient = await A2AClient.fromCardUrl(agentCardUrl, { fetchImpl: customFetch })
-
-    updateStatus(true)
-    isConnected = true
-    addMessage('Connected! You can now chat with the Hubitat Agent.', false)
+    if (connectedAgents.length > 0) {
+      updateStatus(true)
+      isConnected = true
+      updateAgentList(connectedAgents, currentAgent)
+      setActiveAgent(currentAgent)
+      addMessage(`Connected to ${connectedAgents.length} agent(s)! Use @agentname to switch agents.`, false)
+    } else {
+      updateStatus(false)
+      isConnected = false
+      addMessage('Failed to connect to any agents. Please check that the A2A servers are running.', false)
+    }
   } catch (error) {
-    console.error('Failed to connect:', error)
+    console.error('Failed to initialize connections:', error)
     updateStatus(false)
     isConnected = false
-    let errorMessage = error.message
-    if (error.message.includes('Failed to fetch') || error.message.includes('Proxy not available')) {
-      errorMessage = 'Failed to connect:\n' +
-        '1. Make sure the A2A server is running on: ' + agentCardUrl + '\n' +
-        '2. If in development, restart the Vite dev server (npm run dev)\n' +
-        '3. Check browser console for more details'
-    }
-    addMessage(`Failed to connect: ${errorMessage}`, false)
+    addMessage(`Failed to initialize: ${error.message}`, false)
   }
+}
+
+// Get current agent client
+function getCurrentClient() {
+  return a2aClients[currentAgent]
+}
+
+// Switch to a different agent
+export function switchAgent(agentId) {
+  if (a2aClients[agentId]) {
+    currentAgent = agentId
+    setActiveAgent(agentId)
+    const agentConfig = AGENTS[agentId]
+    addMessage(`Switched to ${agentConfig.displayName}`, false)
+    return true
+  }
+  return false
+}
+
+// Get current agent ID
+export function getCurrentAgent() {
+  return currentAgent
+}
+
+// Get agent configuration
+export function getAgentConfig(agentId) {
+  return AGENTS[agentId]
+}
+
+// Get all agent configurations
+export function getAllAgents() {
+  return AGENTS
 }
 
 // Generate UUID
@@ -187,27 +157,63 @@ export function uuidv4() {
 
 // Send message to agent
 export async function sendMessage() {
-  const messageText = messageInput.value.trim()
-  if (!messageText || !isConnected || !a2aClient) return
+  let messageText = messageInput.value.trim()
+  if (!messageText || !isConnected) return
 
-    sendMessageToHUB(messageText, responseCallback);
-    addMessage(messageText, true);
-    clearUserInput();
-    
+  // Parse @mentions
+  const { agentName, messageText: parsedText } = parseMention(messageText)
+  
+  // Switch agent if mentioned
+  if (agentName) {
+    const agentId = Object.keys(AGENTS).find(id => 
+      AGENTS[id].name.toLowerCase() === agentName
+    )
+    if (agentId) {
+      switchAgent(agentId)
+      // If no message after @mention, just switch and return
+      if (!parsedText.trim()) {
+        clearUserInput()
+        return
+      }
+      messageText = parsedText
+    } else {
+      addMessage(`Unknown agent: @${agentName}. Available: ${Object.values(AGENTS).map(a => `@${a.name.toLowerCase()}`).join(', ')}`, false)
+      clearUserInput()
+      return
+    }
+  }
+
+  if (!messageText.trim()) {
+    clearUserInput()
+    return
+  }
+
+  const client = getCurrentClient()
+  if (!client) {
+    addMessage('No agent client available', false)
+    clearUserInput()
+    return
+  }
+
+  // Add agent indicator to user message
+  const agentConfig = AGENTS[currentAgent]
+  addMessage(`[@${agentConfig.name}] ${messageText}`, true)
+  
+  sendMessageToAgent(client, currentAgent, messageText, responseCallback)
+  clearUserInput()
 }
 
 
 // -----------------------------------------------------------------------------
-// Helper: sendMessageToHUB
+// Helper: sendMessageToAgent
 // Sends a single message to the A2A server and invokes the provided
-// responseCallback with the server response. This intentionally does not
-// replace any existing logic and uses the module-scoped `a2aClient`.
+// responseCallback with the server response. Uses the provided client and agentId.
 // -----------------------------------------------------------------------------
-export async function sendMessageToHUB(newMSG, newResponseCallback) {
-  if (!a2aClient) {
-    console.warn('sendMessageToHUB: a2aClient is not initialized')
+export async function sendMessageToAgent(client, agentId, newMSG, newResponseCallback) {
+  if (!client) {
+    console.warn('sendMessageToAgent: client is not initialized')
     if (typeof newResponseCallback === 'function') {
-      newResponseCallback({ error: 'a2aClient not initialized' })
+      newResponseCallback({ error: 'client not initialized' })
     }
     return
   }
@@ -225,22 +231,26 @@ export async function sendMessageToHUB(newMSG, newResponseCallback) {
     // Assume caller provided a valid message shape
     message = { ...newMSG }
   } else {
-    console.warn('sendMessageToHUB: unexpected message type', typeof newMSG)
+    console.warn('sendMessageToAgent: unexpected message type', typeof newMSG)
     if (typeof newResponseCallback === 'function') newResponseCallback({ error: 'invalid message' })
     return
   }
 
-  // Preserve context if available
-  if (contextId && !message.contextId) message.contextId = contextId
+  // Preserve context if available for this agent
+  if (contextIds[agentId] && !message.contextId) {
+    message.contextId = contextIds[agentId]
+  }
 
   try {
     // Use non-streaming sendMessage for a simple request/response pattern
-    const response = await a2aClient.sendMessage({ message })
+    const response = await client.sendMessage({ message })
 
     // Update contextId if present in response
     try {
       const result = response.result || response
-      if (result && result.contextId) contextId = result.contextId
+      if (result && result.contextId) {
+        contextIds[agentId] = result.contextId
+      }
     } catch (e) {
       // ignore parsing issues
     }
@@ -249,9 +259,22 @@ export async function sendMessageToHUB(newMSG, newResponseCallback) {
       newResponseCallback(response)
     }
   } catch (err) {
-    console.error('sendMessageToHUB error:', err)
+    console.error('sendMessageToAgent error:', err)
     if (typeof newResponseCallback === 'function') newResponseCallback({ error: err })
   }
+}
+
+// Legacy function for backwards compatibility
+export async function sendMessageToHUB(newMSG, newResponseCallback) {
+  const client = getCurrentClient()
+  if (!client) {
+    console.warn('sendMessageToHUB: no client available')
+    if (typeof newResponseCallback === 'function') {
+      newResponseCallback({ error: 'client not initialized' })
+    }
+    return
+  }
+  return sendMessageToAgent(client, currentAgent, newMSG, newResponseCallback)
 }
 
 // -----------------------------------------------------------------------------

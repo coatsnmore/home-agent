@@ -88,6 +88,7 @@ services:
       # OLLAMA_ENDPOINT takes precedence over OLLAMA_HOST in llm_provider.py
       - OLLAMA_ENDPOINT=http://host.docker.internal:11434
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - HUBITAT_AGENT_URL=http://hubitat-agent:9002
     # Ensure host.docker.internal resolves (works on Mac/Windows, needed for Linux)
     extra_hosts:
       - "host.docker.internal:host-gateway"

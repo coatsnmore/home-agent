@@ -58,6 +58,51 @@ body {
 	color: #f44336;
 }
 
+/* Agent List Container */
+.agent-list-container {
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.5rem 1rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	background-color: rgba(255, 255, 255, 0.05);
+	overflow-x: auto;
+	flex-wrap: wrap;
+}
+
+.agent-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	background-color: rgba(255, 255, 255, 0.05);
+	cursor: pointer;
+	transition: all 0.25s;
+	font-size: 0.875rem;
+	white-space: nowrap;
+}
+
+.agent-item:hover {
+	background-color: rgba(255, 255, 255, 0.1);
+	border-color: rgba(255, 255, 255, 0.3);
+	transform: translateY(-1px);
+}
+
+.agent-item.active {
+	background-color: rgba(100, 108, 255, 0.3);
+	border-color: #646cff;
+	color: #646cff;
+}
+
+.agent-status {
+	font-size: 0.75rem;
+}
+
+.agent-name {
+	font-weight: 500;
+}
+
 /* Messages Container */
 .messages-container {
 	flex: 1;
@@ -267,6 +312,27 @@ body {
 	.status-indicator.disconnected {
 		background-color: rgba(244, 67, 54, 0.1);
 		color: #c62828;
+	}
+
+	.agent-list-container {
+		border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+		background-color: rgba(0, 0, 0, 0.05);
+	}
+
+	.agent-item {
+		border: 1px solid rgba(0, 0, 0, 0.2);
+		background-color: rgba(0, 0, 0, 0.05);
+	}
+
+	.agent-item:hover {
+		background-color: rgba(0, 0, 0, 0.1);
+		border-color: rgba(0, 0, 0, 0.3);
+	}
+
+	.agent-item.active {
+		background-color: rgba(100, 108, 255, 0.2);
+		border-color: #646cff;
+		color: #646cff;
 	}
 
 	.agent-message {

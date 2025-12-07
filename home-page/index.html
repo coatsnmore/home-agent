@@ -1,16 +1,116 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="A Progressive Web App for communicating with A2A home automation agents" />
-    <meta name="theme-color" content="#646cff" />
-    <link rel="manifest" href="/manifest.json" />
-    <title>Home Agent</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+	<head>
+		<meta charset="UTF-8" />
+		<link rel="icon" type="image/svg+xml" href="/vite.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+		<meta name="description" content="A Progressive Web App for communicating with A2A home automation agents" />
+		<meta name="theme-color" content="#646cff" />
+
+		<title>Home Agent</title>
+		<link rel="stylesheet" href="src/style.css">
+
+	</head>
+	<body>
+		<div id="app">
+			<div class="chat-container">
+				<div class="status-indicator" id="statusIndicator">🔴 Disconnected</div>
+				<div class="messages-container" id="messagesContainer"></div>
+				<div class="input-container">
+					<button class="mic-button" id="micButton" title="Start voice input">🎤</button>
+					<input class="message-input" id="messageInput" type="text" placeholder="Type your message or use microphone..." />
+					<button class="submit-button" id="submitButton">Send</button>
+				</div>
+			</div>
+		</div>
+
+		<script type="module">
+
+		
+
+// =================================================
+console.log('START at the beginning')
+
+// Filter out harmless ONNX Runtime warnings about unused initializers
+const originalWarn = console.warn
+console.warn = function(...args) {
+	const message = args.join(' ')
+	// Suppress ONNX Runtime warnings about unused initializers (harmless optimization warnings)
+	if (message.includes('CleanUnusedInitializersAndNodeArgs') || 
+			message.includes('Removing initializer') ||
+			message.includes('It is not used by any node')) {
+		return // Suppress these warnings
+	}
+	originalWarn.apply(console, args)
+}
+// =================================================
+// Check if we're in a secure context for microphone access
+// (kept in Utilities so it can be moved into a shared utils module)
+function isSecureContext() {
+	// Normalize IPv6 loopback (some browsers expose it as ::1 without brackets)
+	const host = (location.hostname || '').replace(/^\[|\]$/g, '')
+	return window.isSecureContext ||
+				 location.protocol === 'https:' ||
+				 host === 'localhost' ||
+				 host === '127.0.0.1' ||
+				 host === '::1'
+}
+
+
+// =================================================
+/* ===== UI: Chat interface (DOM + state) =====
+	Extracted to `src/ui.js` for clarity. Import the bindings below.
+*/
+import { app, chatContainer, messagesContainer, inputContainer, messageInput, submitButton, micButton, statusIndicator, clickSubmitButton, addMessage, updateStatus, playSound, CHAT_NAME } from './src/ui.js'
+
+
+// =================================================
+/* ===== A2A client & Proxy =====
+	Handles connection to the local A2A agent and rewrites HTTP
+	requests through the HTTPS proxy to avoid mixed-content errors.
+*/
+
+// A2A logic moved to a separate module to keep index.html concise.
+// Importing the module executes setup and exports helpers such as initializeConnection.
+import { initializeConnection } from './src/a2a.js'
+
+
+// =================================================
+/* ===== STT (Speech-to-Text) ===== */
+import { initializeSTT } from './src/stt.js'
+import { textToSpeech } from './src/tts.js'
+
+// Initialize the model (non-blocking if already initialized)
+await initializeSTT()
+
+
+
+// =================================================
+/* ===== Initialization & startup =====
+	Runtime initialization: prepare the mic/TTS UI and kick off
+	connection/model initialization.
+*/
+
+
+
+// Start initialization
+initializeConnection().then(() => {
+	console.log('A2A connection established, initializing STT...')
+	// Initialize STT via the module (if available)
+	try { initializeSTT?.() } catch (e) { console.warn('initializeSTT not available:', e) }
+}).catch(err => {
+	console.error('Connection initialization error:', err)
+	// Still try to initialize STT even if connection fails (best-effort)
+	try { stt?.initializeSTT?.() } catch (e) { console.warn('stt.initializeSTT not available:', e) }
+})
+
+
+
+
+// Try to say hello on load (may be blocked until a user gesture in some browsers)
+//textToSpeech('hello guy')
+
+		</script>
+	</body>
 </html>

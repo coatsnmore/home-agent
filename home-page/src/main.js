@@ -1,6 +1,8 @@
-import './style.css'
 import { A2AClient } from '@a2a-js/sdk/client'
 // Note: @xenova/transformers is imported dynamically in initializeSTT()
+
+// Debug start marker
+console.log('START at the beginning')
 
 // Generate UUID using browser's crypto API with fallback
 function uuidv4() {
@@ -50,10 +52,22 @@ console.warn = function(...args) {
   }
   originalWarn.apply(console, args)
 }
+// =================================================
+// Check if we're in a secure context for microphone access
+// (kept in Utilities so it can be moved into a shared utils module)
+function isSecureContext() {
+  // Normalize IPv6 loopback (some browsers expose it as ::1 without brackets)
+  const host = (location.hostname || '').replace(/^\[|\]$/g, '')
+  return window.isSecureContext ||
+         location.protocol === 'https:' ||
+         host === 'localhost' ||
+         host === '127.0.0.1' ||
+         host === '::1'
+}
 
 // Initialize A2A client - connect to home agent on port 9001
 let a2aClient = null
-
+// =================================================
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -67,46 +81,100 @@ if ('serviceWorker' in navigator) {
   })
 }
 
+// =================================================
+/* ===== UI: Chat interface (DOM + state) =====
+  Builds DOM for the chat UI, manages message rendering and
+  simple UI helpers. Extract to `ui.js` later.
+*/
 // Chat interface state
 let contextId = null
 let isConnected = false
 
-// DOM elements
+var CHAT_NAME = "TEST";
+
+// Play a short sine tone. volume should be 0.0 - 1.0. duration in ms.
+function playSound(frequency = 480, durationMs = 200, volume = 0.12) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    const ac = new AudioCtx()
+    const osc = ac.createOscillator()
+    const gain = ac.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = frequency
+    gain.gain.value = 0
+    osc.connect(gain)
+    gain.connect(ac.destination)
+
+    // Smooth ramp to avoid clicks
+    const now = ac.currentTime
+    gain.gain.cancelScheduledValues(now)
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(volume, now + 0.01)
+
+    osc.start(now)
+
+    // Stop after duration with a short ramp down
+    setTimeout(() => {
+      const stopAt = ac.currentTime + 0.02
+      gain.gain.linearRampToValueAtTime(0, stopAt)
+      try {
+        osc.stop(stopAt)
+      } catch (e) {}
+      // Close audio context shortly after stop to free resources
+      setTimeout(() => {
+        try { ac.close() } catch (e) {}
+      }, 50)
+    }, durationMs)
+  } catch (e) {
+    console.warn('playSound failed:', e)
+  }
+}
+
+// DOM elements — assume static markup in `index.html` provides these
+// Do NOT modify or append elements here; the HTML should be authoritative.
 const app = document.querySelector('#app')
-const chatContainer = document.createElement('div')
-const messagesContainer = document.createElement('div')
-const inputContainer = document.createElement('div')
-const messageInput = document.createElement('input')
-const submitButton = document.createElement('button')
-const micButton = document.createElement('button')
-const ttsButton = document.createElement('button')
-const statusIndicator = document.createElement('div')
+const chatContainer = document.querySelector('.chat-container')
+const messagesContainer = document.querySelector('.messages-container')
+const inputContainer = document.querySelector('.input-container')
+const messageInput = document.querySelector('#messageInput')
+const submitButton = document.querySelector('#submitButton')
+const micButton = document.querySelector('#micButton')
+const statusIndicator = document.querySelector('.status-indicator')
+// Helper to check first word and optionally log before clicking send
+function clickSubmitButton() {
+  try {
+    const text = (messageInput.value || '').trim()
+    const firstWord = (text.split(/\s+/)[0] || '').toUpperCase()
 
-// Setup UI
-chatContainer.className = 'chat-container'
-messagesContainer.className = 'messages-container'
-inputContainer.className = 'input-container'
-messageInput.type = 'text'
-messageInput.placeholder = 'Type your message or use microphone...'
-messageInput.className = 'message-input'
-submitButton.textContent = 'Send'
-submitButton.className = 'submit-button'
-micButton.innerHTML = '🎤'
-micButton.className = 'mic-button'
-micButton.title = 'Start voice input'
-ttsButton.innerHTML = '🔇'
-ttsButton.className = 'tts-button'
-ttsButton.title = 'Enable text-to-speech (click to toggle)'
-statusIndicator.className = 'status-indicator'
+    // FIRST WORD IS WAKE WORD!!
+    if (firstWord.includes(CHAT_NAME)) {
+      // Play a short chime when the configured chat name appears
+      playSound(480, 200, 0.12)
 
-inputContainer.appendChild(micButton)
-inputContainer.appendChild(messageInput)
-inputContainer.appendChild(submitButton)
-inputContainer.appendChild(ttsButton)
-chatContainer.appendChild(statusIndicator)
-chatContainer.appendChild(messagesContainer)
-chatContainer.appendChild(inputContainer)
-app.appendChild(chatContainer)
+      console.log('TESTER IS HERE!')
+    }
+
+    // first word is NOT wake word...
+    else{
+
+      // play "fail" sound
+      playSound(240, 200, 0.12);
+
+      // delete message input
+      messageInput.value = '';
+      return;
+
+    }
+  } catch (e) {
+    console.log('clickSubmitButton: error parsing input')
+    
+  }
+  submitButton.click()
+}
+
+// NOTE: We intentionally avoid setting classes, placeholders, innerHTML,
+// or appending children in this UI section. The static HTML must contain
+// the correct structure and attributes so JS can simply bind behavior.
 
 // Add welcome message
 function addMessage(text, isUser = false) {
@@ -116,10 +184,7 @@ function addMessage(text, isUser = false) {
   messagesContainer.appendChild(messageDiv)
   messagesContainer.scrollTop = messagesContainer.scrollHeight
   
-  // Auto-speak agent messages if TTS is enabled
-  if (!isUser && ttsEnabled && ttsInitialized && text.trim()) {
-    speakText(text)
-  }
+  // (TTS removed) — agent messages are shown only as text in the UI
 }
 
 // Update connection status
@@ -131,6 +196,11 @@ function updateStatus(connected) {
   messageInput.disabled = !connected
 }
 
+// =================================================
+/* ===== A2A client & Proxy =====
+  Handles connection to the local A2A agent and rewrites HTTP
+  requests through the HTTPS proxy to avoid mixed-content errors.
+*/
 // Use proxy in development to avoid CORS issues
 const isDevelopment = import.meta.env.DEV
 
@@ -182,8 +252,7 @@ function createProxiedFetch() {
     // Replace 0.0.0.0 with localhost first (0.0.0.0 is a binding address, not a valid URL)
     if (urlString.includes('0.0.0.0')) {
       proxiedUrl = urlString.replace(/http:\/\/0\.0\.0\.0:/g, 'http://localhost:')
-      console.log(`[Proxy] Replaced 0.0.0.0 with localhost: ${urlString} → ${proxiedUrl}`)
-    }
+w    }
     
     // When served over HTTPS, proxy HTTP requests through nginx
     if (isHttps) {
@@ -423,10 +492,7 @@ async function sendMessage() {
       // Remove streaming class when done
       if (responseDiv) {
         responseDiv.className = 'message agent-message'
-        // Speak the final response if TTS is enabled
-        if (fullResponse && ttsEnabled && ttsInitialized) {
-          speakText(fullResponse)
-        }
+        // TTS removed — do not auto-speak agent responses
       }
     } catch (streamError) {
       // If streaming fails, fall back to non-streaming
@@ -518,6 +584,8 @@ messageInput.addEventListener('keypress', (e) => {
   }
 })
 
+// =================================================
+/* ===== STT (Speech-to-Text) ===== */
 // ===== Speech-to-Text Integration using Whisper (Offline) =====
 let asr = null
 let rec = false
@@ -525,19 +593,19 @@ let buffers = []
 let ctx, src, proc, stream
 let lastSpeechTS = 0
 
-// ===== Text-to-Speech Integration (Offline) =====
-let tts = null
-let ttsInitialized = false
-let ttsEnabled = false
-let ttsAudioContext = null
-let ttsIsSpeaking = false
-let ttsQueue = []
-
+// =================================================
 // Tunables (from original code)
+/*
 const MIN_SEG_SECONDS = 1.0
 const MIN_RMS = 0.001
 const VAD_RMS = 0.008
 const VAD_SILENCE_MS = 2000
+*/
+
+const MIN_SEG_SECONDS = 1.0
+const MIN_RMS = 0.001
+const VAD_RMS = 0.008
+const VAD_SILENCE_MS = 1000
 
 // Helpers (from original code)
 function resample(data, from, to = 16000) {
@@ -653,285 +721,7 @@ async function initializeSTT() {
   }
 }
 
-// Initialize TTS model using transformers.js (fully offline)
-async function initializeTTS() {
-  if (ttsInitialized) return
-  
-  try {
-    addMessage('Loading text-to-speech model... (this may take a moment)', false)
-    ttsButton.innerHTML = '⏳'
-    ttsButton.title = 'Loading TTS model...'
-    console.log('Initializing TTS model...')
-    
-    // Ensure transformers is loaded
-    if (!window.transformersPipeline) {
-      console.log('Transformers not loaded yet, waiting...')
-      let waitCount = 0
-      while (!window.transformersPipeline && waitCount < 50) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-        waitCount++
-      }
-      if (!window.transformersPipeline) {
-        throw new Error('Transformers pipeline not available')
-      }
-    }
-    
-    const pipeline = window.transformersPipeline
-    const env = window.transformersEnv
-    
-    // Configure transformers environment (same as STT)
-    if (env) {
-      env.allowLocalModels = false
-      if (import.meta.env.DEV) {
-        env.remoteURL = '/hf'
-        console.log('Using Vite proxy for HuggingFace in development')
-      } else {
-        env.remoteURL = 'https://huggingface.co'
-      }
-    }
-    
-    console.log('Loading TTS model (this may take a moment on first load)...')
-    console.log('Model will be cached for offline use after first download')
-    
-    // Load TTS model using text-to-audio pipeline - fully offline after first download
-    // Using a lightweight model that works well offline
-    try {
-      // Use text-to-audio pipeline with a quantized model
-      tts = await pipeline("text-to-audio", "Xenova/mms-tts-eng", {
-        quantized: true,
-      })
-    } catch (quantizedError) {
-      console.warn('Quantized TTS model failed, trying non-quantized:', quantizedError)
-      // Fallback to non-quantized
-      try {
-        tts = await pipeline("text-to-audio", "Xenova/mms-tts-eng", {
-          quantized: false,
-        })
-      } catch (fallbackError) {
-        // Try alternative model if mms-tts-eng doesn't work
-        console.warn('mms-tts-eng failed, trying speecht5:', fallbackError)
-        tts = await pipeline("text-to-audio", "Xenova/speecht5_tts", {
-          quantized: false,
-        })
-      }
-    }
-    
-    // Initialize audio context for playback
-    ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)()
-    
-    console.log('TTS model loaded successfully')
-    ttsInitialized = true
-    ttsButton.disabled = false
-    ttsButton.innerHTML = '🔇'
-    ttsButton.title = 'Text-to-speech ready (click to enable)'
-    addMessage('Text-to-speech ready! Click the speaker button to enable.', false)
-    
-  } catch (error) {
-    console.error('Failed to initialize TTS:', error)
-    console.error('Error details:', error.stack)
-    addMessage(`Text-to-speech unavailable: ${error.message}`, false)
-    ttsButton.disabled = true
-    ttsButton.innerHTML = '🔇'
-    ttsButton.title = 'Text-to-speech unavailable'
-  }
-}
-
-// Speak text using transformers.js TTS (fully offline)
-async function speakText(text) {
-  if (!ttsEnabled || !ttsInitialized || !tts) return
-  
-  // Clean text - remove markdown, URLs, etc. for better TTS
-  const cleanText = text
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove markdown links
-    .replace(/https?:\/\/[^\s]+/g, '') // Remove URLs
-    .replace(/\*\*([^\*]+)\*\*/g, '$1') // Remove bold markdown
-    .replace(/\*([^\*]+)\*/g, '$1') // Remove italic markdown
-    .replace(/#{1,6}\s+/g, '') // Remove markdown headers
-    .trim()
-  
-  if (!cleanText) return
-  
-  // Limit text length to prevent very long generation times
-  const maxLength = 500
-  const textToSpeak = cleanText.length > maxLength 
-    ? cleanText.substring(0, maxLength) + '...' 
-    : cleanText
-  
-  // Add to queue and process
-  ttsQueue.push(textToSpeak)
-  processTTSQueue()
-}
-
-// Process TTS queue to prevent overlapping speech
-async function processTTSQueue() {
-  if (ttsIsSpeaking || ttsQueue.length === 0) return
-  
-  ttsIsSpeaking = true
-  const text = ttsQueue.shift()
-  
-  try {
-    // Resume audio context if suspended (required for user interaction)
-    if (ttsAudioContext.state === 'suspended') {
-      await ttsAudioContext.resume()
-    }
-    
-    console.log('Generating speech for:', text.substring(0, 50) + '...')
-    
-    // Generate audio in chunks or with timeout to prevent blocking
-    // Use setTimeout to yield to the event loop
-    const audio = await Promise.race([
-      tts(text),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('TTS generation timeout')), 30000)
-      )
-    ])
-    
-    console.log('Audio generated, processing...')
-    
-    // Extract audio data - text-to-audio pipeline returns audio directly
-    let audioData
-    let sampleRate = 16000 // Default sample rate
-    
-    // The text-to-audio pipeline typically returns { audio: Float32Array, sampling_rate: number }
-    if (audio && audio.audio) {
-      audioData = audio.audio
-      sampleRate = audio.sampling_rate || sampleRate
-    } else if (audio && audio.waveform) {
-      audioData = audio.waveform
-      sampleRate = audio.sampling_rate || sampleRate
-    } else if (audio && audio.data) {
-      audioData = audio.data
-      sampleRate = audio.sample_rate || audio.sampling_rate || sampleRate
-    } else if (Array.isArray(audio)) {
-      audioData = new Float32Array(audio)
-    } else if (audio) {
-      // Try to extract from tensor if it's a tensor
-      let Tensor
-      if (window.transformersTensor) {
-        Tensor = window.transformersTensor
-      } else {
-        const transformersModule = await import("https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js")
-        Tensor = transformersModule.Tensor
-        window.transformersTensor = Tensor
-      }
-      if (audio instanceof Tensor) {
-        audioData = audio.data
-      } else {
-        console.error('Unknown audio format:', audio)
-        throw new Error('Unknown audio format')
-      }
-    } else {
-      console.error('No audio data found in response:', audio)
-      throw new Error('No audio data in TTS response')
-    }
-    
-    // Ensure audioData is a Float32Array
-    if (!(audioData instanceof Float32Array)) {
-      audioData = new Float32Array(audioData)
-    }
-    
-    // Efficient normalization - find max in chunks to avoid blocking
-    let maxVal = 0
-    const chunkSize = 10000
-    for (let i = 0; i < audioData.length; i += chunkSize) {
-      const end = Math.min(i + chunkSize, audioData.length)
-      let chunkMax = 0
-      for (let j = i; j < end; j++) {
-        const abs = Math.abs(audioData[j])
-        if (abs > chunkMax) chunkMax = abs
-      }
-      if (chunkMax > maxVal) maxVal = chunkMax
-    }
-    
-    // Normalize if needed (but don't over-normalize quiet audio)
-    if (maxVal > 1.0) {
-      for (let i = 0; i < audioData.length; i++) {
-        audioData[i] = audioData[i] / maxVal
-      }
-    } else if (maxVal > 0 && maxVal < 0.1) {
-      // Boost quiet audio slightly
-      for (let i = 0; i < audioData.length; i++) {
-        audioData[i] = audioData[i] * (0.5 / maxVal)
-      }
-    }
-    
-    // Ensure sample rate is reasonable
-    if (sampleRate < 8000 || sampleRate > 48000) {
-      console.warn('Unusual sample rate:', sampleRate, 'using 16000')
-      sampleRate = 16000
-    }
-    
-    // Convert to AudioBuffer and play
-    const audioBuffer = ttsAudioContext.createBuffer(
-      1, // mono
-      audioData.length,
-      sampleRate
-    )
-    const channelData = audioBuffer.getChannelData(0)
-    channelData.set(audioData)
-    
-    const source = ttsAudioContext.createBufferSource()
-    source.buffer = audioBuffer
-    source.connect(ttsAudioContext.destination)
-    
-    // Handle playback completion
-    source.onended = () => {
-      console.log('Speech playback completed')
-      ttsIsSpeaking = false
-      // Process next item in queue
-      if (ttsQueue.length > 0) {
-        setTimeout(() => processTTSQueue(), 100)
-      }
-    }
-    
-    source.onerror = (error) => {
-      console.error('Audio playback error:', error)
-      ttsIsSpeaking = false
-      if (ttsQueue.length > 0) {
-        setTimeout(() => processTTSQueue(), 100)
-      }
-    }
-    
-    source.start(0)
-    console.log('Speech playback started, length:', audioData.length, 'samples, rate:', sampleRate)
-    
-  } catch (error) {
-    console.error('TTS error:', error)
-    console.error('Error details:', error.stack)
-    ttsIsSpeaking = false
-    
-    // Don't show error to user for every failure, just log it
-    // Try to process next item in queue
-    if (ttsQueue.length > 0) {
-      setTimeout(() => processTTSQueue(), 1000)
-    }
-  }
-}
-
-// Toggle TTS on/off
-ttsButton.onclick = () => {
-  if (!ttsInitialized) {
-    addMessage('TTS not initialized yet. Please wait...', false)
-    return
-  }
-  
-  ttsEnabled = !ttsEnabled
-  if (ttsEnabled) {
-    ttsButton.innerHTML = '🔊'
-    ttsButton.title = 'Text-to-speech enabled (click to disable)'
-    ttsButton.classList.add('enabled')
-  } else {
-    ttsButton.innerHTML = '🔇'
-    ttsButton.title = 'Text-to-speech disabled (click to enable)'
-    ttsButton.classList.remove('enabled')
-    // Clear queue and stop any current audio
-    ttsQueue = []
-    ttsIsSpeaking = false
-    if (ttsAudioContext && ttsAudioContext.state !== 'closed') {
-      ttsAudioContext.suspend().then(() => ttsAudioContext.resume())
-    }
-  }
-}
+// TTS removed
 
 async function doStartRecording() {
   try {
@@ -1004,6 +794,10 @@ async function doStartRecording() {
       } else if (performance.now() - lastSpeechTS > VAD_SILENCE_MS) {
         // Auto-stop after silence
         doStopRecording()
+        // Automatically click the send button after silence
+        setTimeout(() => {
+          clickSubmitButton()
+        }, 0)
       }
     }
     
@@ -1057,6 +851,7 @@ async function doStartRecording() {
     micButton.title = 'Microphone access failed - click to try again. Check browser permissions (lock icon).'
   }
 }
+
 
 async function doStopRecording() {
   if (!rec) return
@@ -1114,6 +909,13 @@ async function doStopRecording() {
     if (text) {
       // Put transcribed text in input field
       messageInput.value = text
+      // Log the first word detected by STT before any automatic send
+      try {
+        const firstWord = (text.split(/\s+/)[0] || '').toUpperCase()
+        console.log('STT first word:', firstWord)
+      } catch (e) {
+        console.log('STT first word: <error parsing>')
+      }
       messageInput.focus()
     } else {
       addMessage('(No text recognized, try again)', false)
@@ -1140,15 +942,12 @@ micButton.onclick = () => {
   }
 }
 
-// Check if we're in a secure context for microphone access
-function isSecureContext() {
-  return window.isSecureContext || 
-         location.protocol === 'https:' || 
-         location.hostname === 'localhost' || 
-         location.hostname === '127.0.0.1' ||
-         location.hostname === '[::1]'
-}
-
+// =================================================
+/* ===== Initialization & startup =====
+  Runtime initialization: prepare the mic/TTS UI and kick off
+  connection/model initialization. The `isSecureContext()` helper
+  lives in the Utilities section above.
+*/
 // Initialize on load
 micButton.disabled = true
 micButton.innerHTML = '⏳'
@@ -1162,18 +961,12 @@ if (!isSecureContext()) {
 
 // Start initialization
 initializeConnection().then(() => {
-  console.log('A2A connection established, initializing STT and TTS...')
-  // Initialize STT and TTS
+  console.log('A2A connection established, initializing STT...')
+  // Initialize STT
   initializeSTT()
-  initializeTTS()
 }).catch(err => {
   console.error('Connection initialization error:', err)
-  // Still try to initialize STT and TTS even if connection fails
+  // Still try to initialize STT even if connection fails
   initializeSTT()
-  initializeTTS()
 })
-
-// Initialize TTS button state
-ttsButton.disabled = true
-ttsButton.innerHTML = '⏳'
-ttsButton.title = 'Initializing text-to-speech...'
+ 

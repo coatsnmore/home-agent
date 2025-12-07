@@ -66,6 +66,33 @@ services:
   #       #       count: all
   #       #       capabilities: [gpu]
   #   restart: unless-stopped
+  home-agent:
+    build:
+      context: .
+      dockerfile: uv.Dockerfile
+    image: home-agent:dev
+    env_file: 
+        - .env
+    container_name: home-agent
+    depends_on:
+      - hubitat-agent
+    networks:
+      - ollama-network
+    volumes:
+      - .:/app
+    ports:
+      - "9001:9001"           # Expose a port (e.g., for a web server or API)
+    environment:
+      # - MCP_SERVER_HOST=hubitat-mcp  # Use Docker service name for MCP connection
+      # Use host.docker.internal to access Ollama on host machine (Mac/Windows)
+      # OLLAMA_ENDPOINT takes precedence over OLLAMA_HOST in llm_provider.py
+      - OLLAMA_ENDPOINT=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    # Ensure host.docker.internal resolves (works on Mac/Windows, needed for Linux)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: /app/docker/home-agent.sh
+    restart: unless-stopped
   hubitat-agent:
     build:
       context: .
@@ -140,6 +167,7 @@ services:
       - hubitat-agent
       - hubitat-mcp
       - home-page
+      - home-agent
     networks:
       - ollama-network
     ports:

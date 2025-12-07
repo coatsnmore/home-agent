@@ -35,9 +35,19 @@ agent = Agent(
 
 # Create A2A server (streaming enabled by default)
 # Bind to 0.0.0.0 to allow access from outside the container (Docker)
+# a2a_host = os.getenv("A2A_HOST", "0.0.0.0")
+# # Use localhost for the public URL (0.0.0.0 is not a valid URL for browsers)
+# a2a_http_url = os.getenv("A2A_HTTP_URL", "http://localhost:9001")
+# a2a_server = A2AServer(
+#     agent=agent,
+#     host=a2a_host,
+#     port=9001,
+#     http_url=a2a_http_url,
+# )
+
 a2a_host = os.getenv("A2A_HOST", "0.0.0.0")
-# Use localhost for the public URL (0.0.0.0 is not a valid URL for browsers)
-a2a_http_url = os.getenv("A2A_HTTP_URL", "http://localhost:9001")
+host_url=os.getenv("HOST_URL", "http://localhost:9001")
+a2a_http_url = os.getenv("A2A_HTTP_URL", host_url + ":9001")
 a2a_server = A2AServer(
     agent=agent,
     host=a2a_host,

@@ -14,6 +14,7 @@
 
 * Offload TTS to local service or otherwise fix speed
 * Compensate for context window limitations with conversation manager strategies
+* Fix Context Confusion for device status
 * Add markdown renderer on UI
 * Experiment with far field mic devices and wake word for alexa-like experience
 * Add Agent Supervisor

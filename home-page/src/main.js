@@ -142,8 +142,8 @@ const baseUrl = isHttps
 
 // Agent card URL - use nginx proxy path when served over HTTPS
 const agentCardUrl = isHttps
-  ? '/agent/.well-known/agent-card.json'  // Use nginx HTTPS proxy
-  : 'http://localhost:9002/.well-known/agent-card.json'  // Direct HTTP for local development
+  ? '/hubitat/.well-known/agent-card.json'  // Use nginx HTTPS proxy
+  : 'http://localhost:9001/.well-known/agent-card.json'  // Direct HTTP for local development
 
 // Server URLs that need to be proxied
 const actualServerUrls = [

@@ -98,7 +98,9 @@ def control_device(device_id, command):
 def main():
     """Main entry point for the hubitat MCP server."""
     # Start the server
-    mcp.run(transport="streamable-http", port=8888)
+    # Bind to 0.0.0.0 to allow access from outside the container (Docker)
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    mcp.run(transport="streamable-http", host=host, port=8888)
 
 if __name__ == "__main__":
     main()

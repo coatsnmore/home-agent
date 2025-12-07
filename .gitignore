@@ -4,7 +4,7 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
-
+.env.docker
 venv
 
 # Python cache files
@@ -12,3 +12,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# SSL certificates (should never be committed)
+nginx/ssl/
+nginx/certbot/
+*.pem
+*.key
+*.crt
+
+.DS_Store

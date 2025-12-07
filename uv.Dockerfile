@@ -1,5 +1,15 @@
 # Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM astral/uv:python3.12-bookworm-slim
+
+# Install build dependencies required for PyAudio
+# PyAudio needs gcc, make, and PortAudio development libraries
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    libportaudio2 \
+    portaudio19-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install the project into `/app`
 WORKDIR /app
@@ -14,16 +24,18 @@ ENV UV_LINK_MODE=copy
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 
 # Install the project's dependencies using the lockfile and settings
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev
+# RUN --mount=type=cache,target=/root/.cache/uv \
+#     --mount=type=bind,source=uv.lock,target=uv.lock \
+#     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+#     uv sync --locked --no-install-project --no-dev
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 COPY . /app
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
+# RUN --mount=type=cache,target=/root/.cache/uv \
+#     uv sync --locked --no-dev
+
+# RUN chmod +x /app/docker/hubitat-agent.sh
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
@@ -34,4 +46,4 @@ ENTRYPOINT []
 # Run the FastAPI application by default
 # Uses `fastapi dev` to enable hot-reloading when the `watch` sync occurs
 # Uses `--host 0.0.0.0` to allow access from outside the container
-CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/uv_docker_example"]
+# CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/uv_docker_example"]

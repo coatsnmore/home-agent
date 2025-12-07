@@ -34,14 +34,19 @@ export default defineConfig({
     host: true, // Allow access from network IP (0.0.0.0)
     // Or use specific host: '0.0.0.0' to bind to all interfaces
     port: 5173, // Default Vite port (optional, for clarity)
-    https: getHttpsOptions(), // Enable HTTPS for secure context (required for microphone access)
+    // https: getHttpsOptions(), // Enable HTTPS for secure context (required for microphone access)
+    allowedHosts: [
+      'localhost',
+      'home-page', // Docker service name
+      '.local', // Allow all .local domains
+    ],
     proxy: {
       // Proxy requests to the A2A server to avoid CORS issues
-      '/api/a2a': {
-        target: 'http://localhost:9002',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/a2a/, ''),
-      },
+      // '/api/a2a': {
+      //   target: 'http://localhost:9002',
+      //   changeOrigin: true,
+      //   rewrite: (path) => path.replace(/^\/api\/a2a/, ''),
+      // },
       // Proxy HuggingFace requests to avoid CORS issues
       '/hf': {
         target: 'https://huggingface.co',

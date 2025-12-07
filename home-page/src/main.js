@@ -38,6 +38,19 @@ function uuidv4() {
   })
 }
 
+// Filter out harmless ONNX Runtime warnings about unused initializers
+const originalWarn = console.warn
+console.warn = function(...args) {
+  const message = args.join(' ')
+  // Suppress ONNX Runtime warnings about unused initializers (harmless optimization warnings)
+  if (message.includes('CleanUnusedInitializersAndNodeArgs') || 
+      message.includes('Removing initializer') ||
+      message.includes('It is not used by any node')) {
+    return // Suppress these warnings
+  }
+  originalWarn.apply(console, args)
+}
+
 // Initialize A2A client - connect to home agent on port 9001
 let a2aClient = null
 
@@ -120,23 +133,30 @@ function updateStatus(connected) {
 
 // Use proxy in development to avoid CORS issues
 const isDevelopment = import.meta.env.DEV
+
+// Detect if we're being served over HTTPS (via nginx proxy)
+const isHttps = window.location.protocol === 'https:'
+const baseUrl = isHttps 
+  ? window.location.origin  // Use current origin (https://localhost)
+  : window.location.origin
+
+// Agent card URL - use nginx proxy path when served over HTTPS
+const agentCardUrl = isHttps
+  ? '/agent/.well-known/agent-card.json'  // Use nginx HTTPS proxy
+  : 'http://localhost:9002/.well-known/agent-card.json'  // Direct HTTP for local development
+
+// Server URLs that need to be proxied
 const actualServerUrls = [
   'http://localhost:9002',
   'http://127.0.0.1:9002',
   'http://localhost:9001',
   'http://127.0.0.1:9001'
 ]
-const agentCardUrl = isDevelopment 
-  ? '/api/a2a/.well-known/agent-card.json'  // Use Vite proxy in development
-  : 'http://localhost:9002/.well-known/agent-card.json'  // Direct connection in production
 
-// Create a custom fetch that routes through proxy in development
+
+// Create a custom fetch that routes through proxy to avoid mixed content
 function createProxiedFetch() {
-  if (!isDevelopment) {
-    return fetch  // Use default fetch in production
-  }
-  
-  // In development, proxy requests to A2A servers
+  // Always use proxy when served over HTTPS to avoid mixed content issues
   return async (url, options = {}) => {
     let urlString = ''
     
@@ -151,15 +171,59 @@ function createProxiedFetch() {
       urlString = String(url)
     }
     
-    // Check if URL matches any A2A server and replace with proxy
+    // If already a relative URL or HTTPS, use as-is
+    if (urlString.startsWith('/') || urlString.startsWith('https://')) {
+      return fetch(urlString, options)
+    }
+    
+    // Check if URL matches any A2A server and replace with HTTPS proxy
     let proxiedUrl = urlString
-    let wasProxied = false
-    for (const serverUrl of actualServerUrls) {
-      if (urlString.startsWith(serverUrl)) {
-        proxiedUrl = urlString.replace(serverUrl, '/api/a2a')
-        wasProxied = true
-        console.log(`[Proxy] Routing ${urlString} → ${proxiedUrl}`)
-        break
+    
+    // Replace 0.0.0.0 with localhost first (0.0.0.0 is a binding address, not a valid URL)
+    if (urlString.includes('0.0.0.0')) {
+      proxiedUrl = urlString.replace(/http:\/\/0\.0\.0\.0:/g, 'http://localhost:')
+      console.log(`[Proxy] Replaced 0.0.0.0 with localhost: ${urlString} → ${proxiedUrl}`)
+    }
+    
+    // When served over HTTPS, proxy HTTP requests through nginx
+    if (isHttps) {
+      // Check for HTTP URLs that need to be proxied
+      let wasProxied = false
+      for (const serverUrl of actualServerUrls) {
+        if (proxiedUrl.startsWith(serverUrl)) {
+          // Replace HTTP server URL with nginx HTTPS proxy path
+          proxiedUrl = proxiedUrl.replace(serverUrl, '/agent')
+          wasProxied = true
+          console.log(`[Proxy] Routing HTTPS: ${urlString} → ${proxiedUrl}`)
+          break
+        }
+      }
+      
+      // Also handle Docker service names or other HTTP URLs that might appear
+      // (e.g., from agent card that returns http://hubitat-agent:9002)
+      if (!wasProxied && proxiedUrl.startsWith('http://')) {
+        // Check if it's a local/internal URL that should be proxied
+        const urlObj = new URL(proxiedUrl)
+        // If it's localhost, 127.0.0.1, or a Docker service name, proxy it
+        if (urlObj.hostname === 'localhost' || 
+            urlObj.hostname === '127.0.0.1' ||
+            urlObj.hostname.includes('hubitat-agent') ||
+            urlObj.hostname.includes('hubitat-mcp') ||
+            urlObj.port === '9002' || urlObj.port === '9001') {
+          // Extract the path and proxy through nginx
+          const path = urlObj.pathname + urlObj.search + urlObj.hash
+          proxiedUrl = '/agent' + path
+          console.log(`[Proxy] Routing HTTPS (internal): ${urlString} → ${proxiedUrl}`)
+        }
+      }
+    } else {
+      // In HTTP development, use Vite proxy if available
+      for (const serverUrl of actualServerUrls) {
+        if (proxiedUrl.startsWith(serverUrl)) {
+          proxiedUrl = proxiedUrl.replace(serverUrl, '/api/a2a')
+          console.log(`[Proxy] Routing HTTP: ${urlString} → ${proxiedUrl}`)
+          break
+        }
       }
     }
     
@@ -206,8 +270,8 @@ async function initializeConnection() {
     updateStatus(false)
     addMessage('Connecting to Hubitat Agent...', false)
     
-    // First, test if the proxy is working
-    if (isDevelopment) {
+    // Test connection (skip proxy test when using nginx HTTPS proxy)
+    if (isDevelopment && !isHttps) {
       addMessage('Testing proxy connection...', false)
       try {
         const testResponse = await fetch('/api/a2a/.well-known/agent-card.json')
@@ -223,7 +287,7 @@ async function initializeConnection() {
     }
     
     // Create client from agent card URL with custom fetch for proxy support
-    addMessage('Fetching agent card...', false)
+    addMessage('Fetching agent card from: ' + agentCardUrl, false)
     const customFetch = createProxiedFetch()
     a2aClient = await A2AClient.fromCardUrl(agentCardUrl, { fetchImpl: customFetch })
     
@@ -235,7 +299,7 @@ async function initializeConnection() {
     let errorMessage = error.message
     if (error.message.includes('Failed to fetch') || error.message.includes('Proxy not available')) {
       errorMessage = 'Failed to connect:\n' +
-        '1. Make sure the A2A server is running on http://localhost:9002\n' +
+        '1. Make sure the A2A server is running on: ' + agentCardUrl + '\n' +
         '2. If in development, restart the Vite dev server (npm run dev)\n' +
         '3. Check browser console for more details'
     }
@@ -871,6 +935,26 @@ ttsButton.onclick = () => {
 
 async function doStartRecording() {
   try {
+    // Check secure context first
+    if (!window.isSecureContext) {
+      throw new Error('Microphone access requires a secure context (HTTPS). Please access via HTTPS or localhost.')
+    }
+    
+    // Check permissions API if available
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' })
+        console.log('Microphone permission status:', permissionStatus.state)
+        
+        if (permissionStatus.state === 'denied') {
+          throw new Error('Microphone access is denied. Please allow microphone access in your browser settings (click the lock icon in the address bar).')
+        }
+      } catch (permError) {
+        // Permissions API might not be supported, continue anyway
+        console.log('Permissions API not available, continuing...', permError)
+      }
+    }
+    
     // Check if getUserMedia is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       // Try legacy API as fallback
@@ -889,7 +973,16 @@ async function doStartRecording() {
         getUserMedia.call(navigator, { audio: true }, resolve, reject)
       })
     } else {
+      console.log('Requesting microphone access...')
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      console.log('Microphone access granted, stream:', stream)
+      
+      // Verify we actually got audio tracks
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length === 0) {
+        throw new Error('No audio tracks found in microphone stream.')
+      }
+      console.log('Audio tracks:', audioTracks.length, audioTracks[0].label)
     }
     
     rec = true
@@ -925,25 +1018,43 @@ async function doStartRecording() {
     submitButton.disabled = true
   } catch (error) {
     console.error('Failed to start recording:', error)
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      isSecureContext: window.isSecureContext,
+      protocol: window.location.protocol,
+      hostname: window.location.hostname
+    })
+    
     let errorMessage = 'Failed to access microphone. '
+    let helpMessage = ''
     
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-      errorMessage += 'Please allow microphone access in your browser settings.'
+      errorMessage += 'Microphone access was denied. '
+      helpMessage = 'Click the lock icon (🔒) in your browser\'s address bar and allow microphone access. On Windows Chrome with self-signed certificates, you may need to click "Advanced" and "Proceed to site" first.'
     } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-      errorMessage += 'No microphone found. Please connect a microphone.'
+      errorMessage += 'No microphone found. '
+      helpMessage = 'Please connect a microphone and ensure it\'s not disabled in Windows settings.'
     } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-      errorMessage += 'Microphone is being used by another application.'
+      errorMessage += 'Microphone is being used by another application. '
+      helpMessage = 'Close other applications using the microphone (like Voice Recorder, Teams, etc.) and try again.'
+    } else if (!window.isSecureContext) {
+      errorMessage += 'Not in a secure context. '
+      helpMessage = 'Microphone access requires HTTPS. You\'re accessing via: ' + window.location.protocol + '//' + window.location.hostname
     } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      errorMessage += 'Microphone access requires HTTPS or localhost. Please use a secure connection.'
+      errorMessage += 'Microphone API not available. '
+      helpMessage = 'Your browser may not support microphone access, or you need to use HTTPS/localhost.'
     } else {
-      errorMessage += `Error: ${error.message || 'Unknown error'}`
+      errorMessage += `Error: ${error.message || 'Unknown error'}. `
+      helpMessage = 'Check the browser console (F12) for more details. On Windows Chrome with self-signed certificates, try clicking the lock icon and allowing permissions.'
     }
     
-    addMessage(errorMessage, false)
+    addMessage(errorMessage + helpMessage, false)
     rec = false
     micButton.classList.remove('recording')
     micButton.innerHTML = '🎤'
-    micButton.title = 'Microphone access failed - click to try again'
+    micButton.title = 'Microphone access failed - click to try again. Check browser permissions (lock icon).'
   }
 }
 

@@ -37,6 +37,8 @@ def get_model(provider: Optional[str] = None, **options):
         # Allow passing params through options
         if "params" in options:
             kwargs["params"] = options["params"]
+        print(f"Using Ollama host: {host}")
+        print(f"Using Ollama model: {model_id}")
         return OllamaModel(host=host, temperature=0.3,**kwargs)
 
     if provider in ("openrouter", "openai"):

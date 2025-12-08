@@ -19,7 +19,6 @@ var sttModelSize = "tiny"; // worst / fastest
 // do we want to quantize the STT?
 // (faster / less accurate)
 let quantized = true;
-// let quantized = false;
 
 //////////////////
 // COMMAND PROMPT (bias Whisper toward short device commands)

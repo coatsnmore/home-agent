@@ -10,79 +10,80 @@ import {
 } from './ui'
 
 // this is the last recognized speech text
-let lastSpeech = "";
+let lastSpeech = ""
 
-var sttModelSize = "tiny"; // worst / fastest
-// var sttModelSize = "base";
-// var sttModelSize = "small";  // best / slowest
+// ====================================================================
+// PARAMETER CLASS + CURRENT INSTANCE
+// ====================================================================
 
-// do we want to quantize the STT?
-// (faster / less accurate)
-let quantized = true;
+class STTParameters {
+  constructor() {
+    // ===== Backend / model =====
+    // Whisper model size: 'tiny' | 'base' | 'small' | ...
+    this.sttModelSize = 'tiny'  // worst / fastest; you can swap later
 
-//////////////////
-// COMMAND PROMPT (bias Whisper toward short device commands)
-//////////////////
-let COMMAND_PROMPT = `
+    // Quantization: faster but slightly less accurate
+    this.quantized = true
+
+    // Sample rate for Whisper
+    this.SAMPLE_RATE = 16000
+
+    // ===== Command prompt / biasing =====
+    // This can be swapped later for different wake-words / command sets
+    this.commandPrompt = `
 ${CHAT_NAME}, light on
 ${CHAT_NAME}, light off
 ${CHAT_NAME}, austin fan on
 ${CHAT_NAME}, austin fan off
 `.trim()
 
-//////////////////
-// TUNABLES
-//////////////////
-let MIN_SEG_SECONDS = 2.0 // MAYBE 1.5
-let VAD_RMS = 0.010
-let MIN_RMS = 0.003
-let VAD_SILENCE_MS = 2000 // MAYBE 1200-1500
+    // ===== VAD / segmentation =====
+    this.MIN_SEG_SECONDS = 2.0     // minimum segment length (s) to send to ASR
+    this.VAD_RMS = 0.010           // frame RMS threshold for "voice active"
+    this.MIN_RMS = 0.003           // segment RMS threshold to keep
+    this.VAD_SILENCE_MS = 2000     // ms of silence to end a segment
 
-// -------- Post-leveling  --------
-// Master switch for volume leveling + simple peak compression.
-// Turn off if you suspect it's hurting more than helping.
-let ENABLE_LEVELING = true
+    // ===== Leveling + compression =====
+    this.ENABLE_LEVELING = true    // master switch for post-leveling
 
-// Target RMS loudness for segments before sending to ASR.
-// Higher = louder (0–1 range). Try 0.05–0.1.
-// Too high can emphasize background noise or clip peaks.
-let TARGET_RMS = 0.08
+    // Target RMS loudness for segments before sending to ASR.
+    // Higher = louder (0–1 range). Try 0.05–0.1.
+    this.TARGET_RMS = 0.08
 
-// Maximum gain multiplier allowed when boosting quiet segments.
-// Limits how much we can "turn up" distant/quiet speech so we don't
-// massively amplify pure noise. Try 4–8. Lower = safer.
-let MAX_GAIN = 6.0
+    // Maximum gain multiplier when boosting quiet segments.
+    // Limits how much we "turn up" distant/quiet speech.
+    this.MAX_GAIN = 6.0
 
-// -------- compression tunables --------
-// Amplitude threshold where compression of peaks starts (0–1).
-// Samples above this get squashed using COMP_RATIO.
-// Lower = more aggressive compression.
-let COMP_THRESHOLD = 0.6
+    // Compression threshold and ratio
+    this.COMP_THRESHOLD = 0.6      // where compression of peaks starts
+    this.COMP_RATIO = 3.0          // how hard to squash peaks above threshold
 
-// Compression ratio applied to samples above COMP_THRESHOLD.
-// 1.0 = no compression; 2–4 = gentle to moderate.
-// Higher = stronger peak reduction.
-let COMP_RATIO = 3.0
-// ------------------------------------------------------
+    // ===== Tail carry-over =====
+    // Seconds of tail from previous segment to prepend to next buffer
+    this.BUFFER_TAIL_SECONDS = this.MIN_SEG_SECONDS / 2
 
-// When a silence-triggered segment is emitted, keep this many seconds from the
-// end of the previous buffer and prepend it to the next active buffer so
-// short words at the boundary aren't lost.
-const BUFFER_TAIL_SECONDS = MIN_SEG_SECONDS / 2
+    // ===== Prefilter (band-pass-ish) =====
+    this.ENABLE_PREFILTER = true
+    this.HPF_FREQ = 100            // high-pass cutoff Hz (remove rumble)
+    this.LPF_FREQ = 3500           // low-pass cutoff Hz (limit high-frequency noise)
 
-// filter out sounds above / below human vocal range
-const ENABLE_PREFILTER = true
-const HPF_FREQ = 100          // high-pass cutoff Hz (remove rumble)
-const LPF_FREQ = 3500         // low-pass cutoff Hz (limit high-frequency noise)
+    // ===== Spectral VAD (analyser-based) =====
+    this.ENABLE_ANALYSER_VAD = true
+    this.ANALYSER_FFT_SIZE = 1024  // sample size for analyser node
+    this.VAD_BAND_LOW = 120        // low Hz for band energy check
+    this.VAD_BAND_HIGH = 3200      // high Hz for band energy check
+    this.VAD_ENERGY_RATIO = 0.40   // fraction of input energy in band to count as voice
+  }
+}
 
-// filter out sounds whose % frequency is outside of human vocal range
-const ENABLE_ANALYSER_VAD = true
-const ANALYSER_FFT_SIZE = 1024  // sample size for analyser node...larger = better / slower
-const VAD_BAND_LOW = 120        // low Hz for band energy check
-const VAD_BAND_HIGH = 3200      // high Hz for band energy check
-const VAD_ENERGY_RATIO = 0.40   // fraction of input between VAD_BAND_LOW/HIGH to consider voice
+// Single global parameter set used by the rest of the code.
+// Later you can swap this out with another instance/preset.
+let currentParameters = new STTParameters()
 
-// Internal state
+// ====================================================================
+// INTERNAL STATE
+// ====================================================================
+
 let asr = null
 let rec = false
 let buffers = []
@@ -93,10 +94,12 @@ let lastSpeechTS = 0
 let processingSegment = false
 let recordStartTS = 0
 
-// Resample Float32Array `data` from `from` Hz to `to` Hz (default 16kHz)
-let SAMPLE_RATE = 16000
+// ====================================================================
+// HELPERS
+// ====================================================================
 
-function resample(data, from, to = SAMPLE_RATE) {
+// Resample Float32Array `data` from `from` Hz to `to` Hz (default 16kHz)
+function resample(data, from, to = currentParameters.SAMPLE_RATE) {
   if (from === to) return data
   const ratio = to / from
   const out = new Float32Array(Math.floor(data.length * ratio))
@@ -117,47 +120,18 @@ const rms = a => {
 
 function isSecureContextLocal() {
   const host = (location.hostname || '').replace(/^\[|\]$/g, '')
-  return window.isSecureContext ||
+  return (
+    window.isSecureContext ||
     location.protocol === 'https:' ||
     host === 'localhost' ||
     host === '127.0.0.1' ||
     host === '::1'
+  )
 }
 
-// ---- NEW: tail helper ----
-function computeTailBuffer(localBuffers, seconds, sampleRate) {
-  let totalLen = 0
-  for (const b of localBuffers) totalLen += b.length
-  if (!totalLen) return null
-
-  const tailSamples = Math.min(totalLen, Math.floor(seconds * sampleRate))
-  if (!tailSamples) return null
-
-  const startIndex = totalLen - tailSamples
-  const tail = new Float32Array(tailSamples)
-
-  let readPos = 0
-  let destOff = 0
-
-  for (const b of localBuffers) {
-    const bLen = b.length
-    const segStart = Math.max(0, startIndex - readPos)
-    const segEnd = Math.min(
-      bLen,
-      startIndex - readPos + tailSamples - destOff
-    )
-    const segLen = segEnd - segStart
-
-    if (segLen > 0) {
-      tail.set(b.subarray(segStart, segEnd), destOff)
-      destOff += segLen
-      if (destOff >= tailSamples) break
-    }
-    readPos += bLen
-  }
-
-  return tail
-}
+// ====================================================================
+// MODEL INITIALIZATION
+// ====================================================================
 
 export async function initializeSTT() {
   try {
@@ -166,7 +140,9 @@ export async function initializeSTT() {
     // Load transformers pipeline if missing
     if (!window.transformersPipeline) {
       try {
-        const transformersModule = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js')
+        const transformersModule = await import(
+          'https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js'
+        )
         window.transformersPipeline = transformersModule.pipeline
         window.transformersEnv = transformersModule.env
         window.transformersTensor = transformersModule.Tensor
@@ -198,10 +174,18 @@ export async function initializeSTT() {
     }
 
     try {
-      asr = await pipeline('automatic-speech-recognition', 'Xenova/whisper-' + sttModelSize + '.en', { quantized: quantized })
+      asr = await pipeline(
+        'automatic-speech-recognition',
+        'Xenova/whisper-' + currentParameters.sttModelSize + '.en',
+        { quantized: currentParameters.quantized }
+      )
     } catch (e) {
       console.warn('Quantized ASR failed, falling back:', e)
-      asr = await pipeline('automatic-speech-recognition', 'Xenova/whisper-' + sttModelSize + '.en', { quantized: false })
+      asr = await pipeline(
+        'automatic-speech-recognition',
+        'Xenova/whisper-' + currentParameters.sttModelSize + '.en',
+        { quantized: false }
+      )
     }
 
     addMessage('Speech recognition ready! Click the microphone to start.', false)
@@ -212,6 +196,10 @@ export async function initializeSTT() {
     showRecording(false)
   }
 }
+
+// ====================================================================
+// RECORDING START
+// ====================================================================
 
 export async function start() {
   try {
@@ -227,7 +215,8 @@ export async function start() {
     }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      const getUserMedia = navigator.mediaDevices?.getUserMedia ||
+      const getUserMedia =
+        navigator.mediaDevices?.getUserMedia ||
         navigator.getUserMedia ||
         navigator.webkitGetUserMedia ||
         navigator.mozGetUserMedia ||
@@ -255,16 +244,23 @@ export async function start() {
     proc = ctx.createScriptProcessor(4096, 1, 1)
 
     // set up optional prefilter and analyser (connect before processor)
-    if (ENABLE_PREFILTER) {
+    if (currentParameters.ENABLE_PREFILTER) {
       try {
-        hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = HPF_FREQ
-        lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = LPF_FREQ
+        hp = ctx.createBiquadFilter()
+        hp.type = 'highpass'
+        hp.frequency.value = currentParameters.HPF_FREQ
+
+        lp = ctx.createBiquadFilter()
+        lp.type = 'lowpass'
+        lp.frequency.value = currentParameters.LPF_FREQ
+
         src.connect(hp)
         hp.connect(lp)
         lp.connect(proc)
-        if (ENABLE_ANALYSER_VAD) {
+
+        if (currentParameters.ENABLE_ANALYSER_VAD) {
           analyser = ctx.createAnalyser()
-          analyser.fftSize = ANALYSER_FFT_SIZE
+          analyser.fftSize = currentParameters.ANALYSER_FFT_SIZE
           lp.connect(analyser)
         }
       } catch (e) {
@@ -281,20 +277,25 @@ export async function start() {
 
       // Optional analyser-based gating: skip frames whose spectral energy is
       // mostly outside the configured human vocal band.
-      if (ENABLE_ANALYSER_VAD && analyser) {
+      if (currentParameters.ENABLE_ANALYSER_VAD && analyser) {
         try {
           const freqData = new Uint8Array(analyser.frequencyBinCount)
           analyser.getByteFrequencyData(freqData)
           let inBand = 0, total = 0
+
           const binSize = (ctx.sampleRate || 48000) / analyser.fftSize
-          const lowBin = Math.max(0, Math.floor(VAD_BAND_LOW / binSize))
-          const highBin = Math.min(freqData.length - 1, Math.ceil(VAD_BAND_HIGH / binSize))
+          const lowBin = Math.max(0, Math.floor(currentParameters.VAD_BAND_LOW / binSize))
+          const highBin = Math.min(
+            freqData.length - 1,
+            Math.ceil(currentParameters.VAD_BAND_HIGH / binSize)
+          )
+
           for (let i = 0; i < freqData.length; i++) {
             total += freqData[i]
             if (i >= lowBin && i <= highBin) inBand += freqData[i]
           }
-          const ratio = total > 0 ? (inBand / total) : 0
-          if (ratio < VAD_ENERGY_RATIO) {
+          const ratio = total > 0 ? inBand / total : 0
+          if (ratio < currentParameters.VAD_ENERGY_RATIO) {
             // treat as non-vocal frame; do not append
             return
           }
@@ -315,7 +316,7 @@ export async function start() {
       }
 
       // update last speech timestamp when energy is above VAD threshold
-      if (rms(ch) >= VAD_RMS) {
+      if (rms(ch) >= currentParameters.VAD_RMS) {
         lastSpeechTS = performance.now()
         // clear countdown while voice is active
         try { updateVADCountdown(null) } catch (e) {}
@@ -325,28 +326,60 @@ export async function start() {
         const silentFor = performance.now() - lastSpeechTS
         // update countdown display (seconds, one decimal)
         try {
-          updateVADCountdown(Math.max(0, (VAD_SILENCE_MS - silentFor) / 1000))
+          updateVADCountdown(
+            Math.max(0, (currentParameters.VAD_SILENCE_MS - silentFor) / 1000)
+          )
         } catch (e) {}
 
-        if (silentFor > VAD_SILENCE_MS && buffers.length && !processingSegment) {
+        if (silentFor > currentParameters.VAD_SILENCE_MS && buffers.length && !processingSegment) {
           processingSegment = true
 
           // hide countdown and duration while processing
           try { updateVADCountdown(null) } catch (e) {}
           try { updateVADDuration(null) } catch (e) {}
 
+          // copy buffers for processing and synchronously compute a short
+          // tail slice to preserve at the head of the next buffer batch.
           const localBuffers = buffers.slice()
 
-          // compute tail before clearing buffers
           try {
-            const sampleRate = ctx ? ctx.sampleRate : 48000
-            tailBuffer = computeTailBuffer(
-              localBuffers,
-              BUFFER_TAIL_SECONDS,
-              sampleRate
-            )
-          } catch (e) {
-            console.warn('tail computation failed:', e)
+            let totalLen = 0
+            for (const b of localBuffers) totalLen += b.length
+            if (totalLen > 0) {
+              const sampleRate = ctx ? ctx.sampleRate : 48000
+              const tailSamples = Math.min(
+                totalLen,
+                Math.floor(currentParameters.BUFFER_TAIL_SECONDS * sampleRate)
+              )
+              if (tailSamples > 0) {
+                const tail = new Float32Array(tailSamples)
+                // copy last `tailSamples` from localBuffers into tail
+                let destOff = 0
+                const startIndex = totalLen - tailSamples
+                let readPos = 0
+                for (const b of localBuffers) {
+                  const bLen = b.length
+                  const bCopyFrom = Math.max(0, startIndex - readPos)
+                  const bCopyLen = Math.max(
+                    0,
+                    Math.min(bLen - bCopyFrom, tailSamples - destOff)
+                  )
+                  if (bCopyLen > 0) {
+                    tail.set(b.subarray(bCopyFrom, bCopyFrom + bCopyLen), destOff)
+                    destOff += bCopyLen
+                    if (destOff >= tailSamples) break
+                  }
+                  readPos += bLen
+                }
+                tailBuffer = tail
+              } else {
+                tailBuffer = null
+              }
+            } else {
+              tailBuffer = null
+            }
+          } catch (err) {
+            console.warn('tail computation failed:', err)
             tailBuffer = null
           }
 
@@ -355,11 +388,13 @@ export async function start() {
             let _totalSamplesBeforeReset = 0
             for (const b of localBuffers) _totalSamplesBeforeReset += b.length
             const _sampleRateBeforeReset = ctx ? ctx.sampleRate : 48000
+            /*
             console.log(
               'Reset buffers — previous buffer length:',
               (_totalSamplesBeforeReset / _sampleRateBeforeReset).toFixed(1) + 's'
             )
-          } catch (e) {}
+              */
+          } catch (err) {}
 
           buffers = []
           if (tailBuffer && tailBuffer.length) buffers.push(tailBuffer)
@@ -372,33 +407,39 @@ export async function start() {
               if (total === 0) return
               const mono = new Float32Array(total)
               let off = 0
-              for (const b of localBuffers) { mono.set(b, off); off += b.length }
+              for (const b of localBuffers) {
+                mono.set(b, off)
+                off += b.length
+              }
 
               const pcm = resample(mono, ctx.sampleRate)
-              const duration = pcm.length / SAMPLE_RATE
+              const duration = pcm.length / currentParameters.SAMPLE_RATE
               const energyOriginal = rms(pcm)
 
               // Gate on original energy (before leveling/compression)
-              if (duration >= MIN_SEG_SECONDS && energyOriginal >= MIN_RMS) {
-
+              if (
+                duration >= currentParameters.MIN_SEG_SECONDS &&
+                energyOriginal >= currentParameters.MIN_RMS
+              ) {
                 // --- Volume leveling + simple peak compression ---
-                if (ENABLE_LEVELING) {
+                if (currentParameters.ENABLE_LEVELING) {
                   const currentRMS = energyOriginal
                   if (currentRMS > 0) {
                     // Compute desired gain and clamp to MAX_GAIN
-                    let gain = TARGET_RMS / currentRMS
-                    if (gain > MAX_GAIN) gain = MAX_GAIN
+                    let gain = currentParameters.TARGET_RMS / currentRMS
+                    if (gain > currentParameters.MAX_GAIN) gain = currentParameters.MAX_GAIN
 
                     for (let i = 0; i < pcm.length; i++) {
                       let v = pcm[i] * gain
 
                       // Soft compression on peaks above COMP_THRESHOLD
                       const av = Math.abs(v)
-                      if (av > COMP_THRESHOLD) {
+                      if (av > currentParameters.COMP_THRESHOLD) {
                         const sign = v < 0 ? -1 : 1
-                        const over = av - COMP_THRESHOLD
+                        const over = av - currentParameters.COMP_THRESHOLD
                         // Reduce "over" portion by COMP_RATIO
-                        const compressed = COMP_THRESHOLD + over / COMP_RATIO
+                        const compressed =
+                          currentParameters.COMP_THRESHOLD + over / currentParameters.COMP_RATIO
                         v = sign * compressed
                       }
 
@@ -412,7 +453,7 @@ export async function start() {
                 // -------------------------------------------------
 
                 const result = await asr(pcm, {
-                  prompt: COMMAND_PROMPT,
+                  prompt: currentParameters.commandPrompt,
                   condition_on_prev_text: false
                 })
                 const text = (result?.text || '').trim()
@@ -434,7 +475,6 @@ export async function start() {
 
     // start duration tracking
     recordStartTS = performance.now()
-
   } catch (error) {
     console.error('Failed to start recording:', error)
     let errorMessage = 'Failed to access microphone. '
@@ -449,10 +489,12 @@ export async function start() {
   }
 }
 
-//----------------------------------------------------------------------------
-// Process recognized speech text
+// ====================================================================
+// POST-ASR: PROCESS RECOGNIZED TEXT
+// ====================================================================
+
 function processSpeechText(newText) {
-  lastSpeech = newText;
+  lastSpeech = newText
 
   if (newText) {
     messageInput.value = newText
@@ -463,8 +505,8 @@ function processSpeechText(newText) {
       let textCommand = textAfterWord(newText, CHAT_NAME)
 
       if (textCommand !== null) {
-        // TEST:
-        // textCommand = "FORCE " + textCommand
+        // If you want to force a prefix, uncomment:
+        // textCommand = "FORCE " + textCommand;
 
         messageInput.value = textCommand
         messageInput.focus()
@@ -474,9 +516,8 @@ function processSpeechText(newText) {
         // trigger the same submit action as the UI
         clickSubmitButton()
       }
-
     } catch (e) {
-      console.warn('tester-check error', e)
+      console.warn('wakeword-check error', e)
     }
 
     console.log(newText)
@@ -486,7 +527,7 @@ function processSpeechText(newText) {
 }
 
 export function getFirstWord(text) {
-  return (text.split(/\s+/)[0] || '').toUpperCase();
+  return (text.split(/\s+/)[0] || '').toUpperCase()
 }
 
 // Return the substring of `newText` that occurs after the first occurrence of
@@ -494,8 +535,8 @@ export function getFirstWord(text) {
 // present, return null.
 export function textAfterWord(newText, newWord) {
   // make lower-case for comparison
-  newText = String(newText).toLocaleLowerCase();
-  newWord = String(newWord).toLocaleLowerCase();
+  newText = String(newText).toLocaleLowerCase()
+  newWord = String(newWord).toLocaleLowerCase()
 
   if (!newText || !newWord) return null
 
@@ -519,7 +560,8 @@ export function textAfterWord(newText, newWord) {
 // Levenshtein distance helper
 function levenshtein(a, b) {
   if (a === b) return 0
-  const la = a.length, lb = b.length
+  const la = a.length
+  const lb = b.length
   if (la === 0) return lb
   if (lb === 0) return la
   const v0 = new Array(lb + 1)
@@ -540,7 +582,9 @@ function levenshtein(a, b) {
   return v1[lb]
 }
 
-export function isRecording() { return rec }
+export function isRecording() {
+  return rec
+}
 
 export function activateMic() {
   if (!asr) {
@@ -565,10 +609,12 @@ export async function stop() {
     let _total = 0
     for (const b of buffers) _total += b.length
     const _sr = ctx ? ctx.sampleRate : 48000
+    /*
     console.log(
       'Reset buffers (stop) — previous buffer length:',
       (_total / _sr).toFixed(1) + 's'
     )
+      */
   } catch (e) {}
   buffers = []
   tailBuffer = null

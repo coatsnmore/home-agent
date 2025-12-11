@@ -66,6 +66,20 @@ services:
   #       #       count: all
   #       #       capabilities: [gpu]
   #   restart: unless-stopped
+  piper:
+    build:
+      context: ./PIPER-SRC
+      dockerfile: Dockerfile
+    image: piper-tts:dev
+    container_name: piper-tts
+    networks:
+      - ollama-network
+    volumes:
+      - ./PIPER-SRC:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
   hubitat-agent:
     build:
       context: .
@@ -137,6 +151,7 @@ services:
     image: nginx-ssl:dev
     container_name: nginx-ssl
     depends_on:
+      - piper
       - hubitat-agent
       - hubitat-mcp
       - home-page

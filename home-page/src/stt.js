@@ -41,8 +41,11 @@ ${CHAT_NAME}, austin fan off
     this.MIN_SEG_SECONDS = 2.0     // minimum segment length (s) to send to ASR
     this.VAD_RMS = 0.010           // frame RMS threshold for "voice active"
     this.MIN_RMS = 0.003           // segment RMS threshold to keep
-    this.VAD_SILENCE_MS = 2000     // ms of silence to end a segment
+    this.VAD_SILENCE_MS = 1000     // ms of silence to end a segment
 
+  
+
+    
     // ===== Leveling + compression =====
     this.ENABLE_LEVELING = true    // master switch for post-leveling
 

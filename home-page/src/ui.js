@@ -2,6 +2,7 @@
 // Exports DOM bindings and UI helpers as named exports (live bindings where appropriate)
 
 import { sendMessage } from './a2a.js'
+import { speakWithPiper, initializePiperTTS } from './tts.js'
 
 
 //export const CHAT_NAME = 'Dexter'
@@ -126,8 +127,10 @@ export function addMessage(text, isUser = false) {
   // play sound
   if(!isUser)
       playSound(240, 200, 0.12)
-  else
-    textToSpeech(text)
+  // TTS removed - using Piper TTS instead
+  else{
+    speakWithPiper(text);
+  }
 
 
 
@@ -216,6 +219,7 @@ messageInput.addEventListener('keypress', (e) => {
 })
 
 micButton.onclick = () => {
+  initializePiperTTS();
   activateMic();
 
   requestWakeLock();

@@ -22,6 +22,14 @@
 					<input class="message-input" id="messageInput" type="text" placeholder="Type your message or use microphone..." />
 					<button class="submit-button" id="submitButton">Send</button>
 				</div>
+				<!-- Piper TTS Test Panel -->
+				<div>
+					<h3>Piper TTS Test</h3>
+					<div style="display: flex; gap: 10px;">
+						<input type="text" id="piperTextInput" value="howdy" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;" />
+						<button id="piperSpeakButton" style="padding: 8px 16px; background: #646cff; color: white; border: none; border-radius: 4px; cursor: pointer;">Speak</button>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -79,7 +87,6 @@ import { initializeConnection } from './src/a2a.js'
 // =================================================
 /* ===== STT (Speech-to-Text) ===== */
 import { initializeSTT } from './src/stt.js'
-import { textToSpeech } from './src/tts.js'
 
 // Initialize the model (non-blocking if already initialized)
 await initializeSTT()
@@ -105,12 +112,45 @@ initializeConnection().then(() => {
 	try { stt?.initializeSTT?.() } catch (e) { console.warn('stt.initializeSTT not available:', e) }
 })
 
+// =================================================
+/* ===== Piper TTS Function ===== */
+async function speakWithPiper(speechText) {
+	try {
+		const response = await fetch('/piper/speak', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({ text: speechText })
+		});
+		
+		if (!response.ok) {
+			throw new Error(`HTTP error! status: ${response.status}`);
+		}
+		
+		const audioBlob = await response.blob();
+		const audioUrl = URL.createObjectURL(audioBlob);
+		const audio = new Audio(audioUrl);
+		await audio.play();
+	} catch (error) {
+		console.error('Piper TTS Error:', error);
+		throw error;
+	}
+}
 
-
-
-// Try to say hello on load (may be blocked until a user gesture in some browsers)
-//textToSpeech('hello guy')
+// =================================================
+/* ===== Piper TTS Test Integration ===== */
+document.getElementById('piperSpeakButton').addEventListener('click', async () => {
+	try {
+		const text = document.getElementById('piperTextInput').value;
+		await speakWithPiper(text);
+	} catch (error) {
+		alert('Piper TTS failed: ' + error.message);
+	}
+});
 
 		</script>
+
+
 	</body>
 </html>

@@ -3,6 +3,9 @@
 // Shared AudioContext for mobile compatibility
 let audioContext = null;
 
+// Track if TTS is currently speaking
+export let isTTSSpeaking = false;
+
 function getAudioContext() {
 	if (!audioContext) {
 		const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -27,6 +30,8 @@ export function initializePiperTTS() {
 
 export async function speakWithPiper(speechText) {
 	try {
+		isTTSSpeaking = true;
+		
 		const response = await fetch('/piper/speak', {
 			method: 'POST',
 			headers: {
@@ -52,10 +57,14 @@ export async function speakWithPiper(speechText) {
 		
 		// Return a promise that resolves when playback ends
 		return new Promise((resolve) => {
-			source.onended = resolve;
+			source.onended = () => {
+				isTTSSpeaking = false;
+				resolve();
+			};
 		});
 	} catch (error) {
 		console.error('Piper TTS Error:', error);
+		isTTSSpeaking = false;
 		throw error;
 	}
 }

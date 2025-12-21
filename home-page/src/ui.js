@@ -7,7 +7,8 @@ import { speakWithPiper, initializePiperTTS } from './tts.js'
 
 //export const CHAT_NAME = 'Dexter'
 export const CHAT_NAME = 'Zentra'
-// export const CHAT_NAME = 'Rexstar'
+// export const CHAT_NAME = 'Obama'
+// export const CHAT_NAME = 'Manara'
 
 
 // Chat interface state (exported as live bindings)
@@ -116,7 +117,7 @@ export function clearUserInput(){
 }
 
 // Add welcome message
-export function addMessage(text, isUser = false) {
+export function addMessage(text, isUser = false, playTTS = true) {
   const messageDiv = document.createElement('div')
   messageDiv.className = `message ${isUser ? 'user-message' : 'agent-message'}`
   messageDiv.textContent = text
@@ -125,10 +126,11 @@ export function addMessage(text, isUser = false) {
   // (TTS removed) — agent messages are shown only as text in the UI
 
   // play sound
-  if(!isUser)
-      playSound(240, 200, 0.12)
+  if(!isUser){
+      // playSound(240, 200, 0.12)
+  }
   // TTS removed - using Piper TTS instead
-  else{
+  else if(playTTS) {
     speakWithPiper(text);
   }
 
@@ -174,6 +176,10 @@ export function showRecording(isRecording){
 
 // Play a short sine tone. volume should be 0.0 - 1.0. duration in ms.
 export function playSound(frequency = 480, durationMs = 200, volume = 0.12) {
+
+  // TEMP:
+  // return;
+
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext
     const ac = new AudioCtx()

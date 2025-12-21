@@ -8,9 +8,35 @@ import {
   updateVADCountdown,
   updateVADDuration
 } from './ui'
+import { isTTSSpeaking, speakWithPiper } from './tts'
 
 // this is the last recognized speech text
-let lastSpeech = ""
+let lastSpeech = ''
+
+export let wakewordCounter = 0
+export let exactWakewordCounter = 0
+
+// Function to check if text contains a search term
+function containsText(newText, newSearchTerm) {
+  return newText.toLowerCase().includes(newSearchTerm.toLowerCase())
+}
+
+// these statements are pushed to the AI on page load
+function INIT_AI_MESSAGES() {
+  // addMessage('Keep your answers brief.', true, false)
+  // addMessage('Dont ask questions.', true, false)
+  // addMessage('Act quickly. Don\'t waste time.', true, false)
+}
+
+// ====================================================================
+// EXTRA wake words
+// ====================================================================
+const WAKE_WORD_ALIASES = [
+  'etc',
+  'central',
+  'zantron'
+]
+
 
 // ====================================================================
 // PARAMETER CLASS + CURRENT INSTANCE
@@ -20,7 +46,8 @@ class STTParameters {
   constructor() {
     // ===== Backend / model =====
     // Whisper model size: 'tiny' | 'base' | 'small' | ...
-    this.sttModelSize = 'tiny'  // worst / fastest; you can swap later
+    this.sttModelSize = 'tiny' // worst / fastest
+    // this.sttModelSize = 'base'   // medium
 
     // Quantization: faster but slightly less accurate
     this.quantized = true
@@ -29,59 +56,67 @@ class STTParameters {
     this.SAMPLE_RATE = 16000
 
     // ===== Command prompt / biasing =====
-    // This can be swapped later for different wake-words / command sets
+    // Bias whisper hard toward hearing the wake word instead of "music"
     this.commandPrompt = `
-${CHAT_NAME}, light on
-${CHAT_NAME}, light off
-${CHAT_NAME}, austin fan on
-${CHAT_NAME}, austin fan off
+${CHAT_NAME}
+${CHAT_NAME}
+${CHAT_NAME}
+${CHAT_NAME}
 `.trim()
 
     // ===== VAD / segmentation =====
-    this.MIN_SEG_SECONDS = 2.0     // minimum segment length (s) to send to ASR
-    this.VAD_RMS = 0.010           // frame RMS threshold for "voice active"
-    this.MIN_RMS = 0.003           // segment RMS threshold to keep
-    this.VAD_SILENCE_MS = 1000     // ms of silence to end a segment
+    this.MIN_SEG_SECONDS = 2.0 // minimum segment length (s) to send to ASR
+    this.VAD_RMS = 0.010 // frame RMS threshold for "voice active"
+    this.MIN_RMS = 0.003 // segment RMS threshold to keep
+    this.VAD_SILENCE_MS = 1000 // ms of silence to end a segment (base)
 
-  
+    // ===== Pre/Post-roll padding =====
+    this.PREROLL_MS = 300 // ms of audio to include before speech detection
+    this.POSTROLL_MS = 450 // ms of audio to include after silence detection
 
-    
     // ===== Leveling + compression =====
-    this.ENABLE_LEVELING = true    // master switch for post-leveling
-
-    // Target RMS loudness for segments before sending to ASR.
-    // Higher = louder (0–1 range). Try 0.05–0.1.
+    this.ENABLE_LEVELING = true // master switch for post-leveling
+    // this.ENABLE_LEVELING = false
     this.TARGET_RMS = 0.08
-
-    // Maximum gain multiplier when boosting quiet segments.
-    // Limits how much we "turn up" distant/quiet speech.
     this.MAX_GAIN = 6.0
-
-    // Compression threshold and ratio
-    this.COMP_THRESHOLD = 0.6      // where compression of peaks starts
-    this.COMP_RATIO = 3.0          // how hard to squash peaks above threshold
-
-    // ===== Tail carry-over =====
-    // Seconds of tail from previous segment to prepend to next buffer
-    this.BUFFER_TAIL_SECONDS = this.MIN_SEG_SECONDS / 2
+    this.COMP_THRESHOLD = 0.6
+    this.COMP_RATIO = 3.0
 
     // ===== Prefilter (band-pass-ish) =====
     this.ENABLE_PREFILTER = true
-    this.HPF_FREQ = 100            // high-pass cutoff Hz (remove rumble)
-    this.LPF_FREQ = 3500           // low-pass cutoff Hz (limit high-frequency noise)
+    this.HPF_FREQ = 100
+    this.LPF_FREQ = 3500
 
     // ===== Spectral VAD (analyser-based) =====
+    // FIX APPLIED: analyser no longer drops frames; it only qualifies *speech start*.
     this.ENABLE_ANALYSER_VAD = true
-    this.ANALYSER_FFT_SIZE = 1024  // sample size for analyser node
-    this.VAD_BAND_LOW = 120        // low Hz for band energy check
-    this.VAD_BAND_HIGH = 3200      // high Hz for band energy check
-    this.VAD_ENERGY_RATIO = 0.40   // fraction of input energy in band to count as voice
+    this.ANALYSER_FFT_SIZE = 1024
+    this.VAD_BAND_LOW = 120
+    this.VAD_BAND_HIGH = 3200
+    this.VAD_ENERGY_RATIO = 0.40
   }
 }
 
-// Single global parameter set used by the rest of the code.
-// Later you can swap this out with another instance/preset.
-let currentParameters = new STTParameters()
+// ====================================================================
+// MODE STATE + PARAM SETS
+// ====================================================================
+
+// allows commands when in active mode...
+let activeMode = false
+let activeModeParams = new STTParameters()
+
+// set params for better wake word detection
+let wakeWordParams = new STTParameters()
+wakeWordParams.MIN_SEG_SECONDS = 0.25 // GOOD!
+wakeWordParams.VAD_SILENCE_MS /= 2
+wakeWordParams.POSTROLL_MS /= 2
+
+// start in wake word mode
+let currentParameters = wakeWordParams
+
+// SET THIS if we're testing param efficacy
+let testingParams = null
+// testingParams = wakeWordParams
 
 // ====================================================================
 // INTERNAL STATE
@@ -90,12 +125,20 @@ let currentParameters = new STTParameters()
 let asr = null
 let rec = false
 let buffers = []
+let prerollBuffer = [] // circular buffer for pre-roll padding
 let ctx, src, proc, stream
 let hp, lp, analyser
-let tailBuffer = null
 let lastSpeechTS = 0
 let processingSegment = false
 let recordStartTS = 0
+let speechDetected = false // track if speech has started
+
+// Track last params applied to the *audio graph* so we can decide
+// whether we can update nodes live or must rebuild the chain.
+let lastGraphParams = null
+
+// NEW: serialize mode switches so we don't overlap stop/start cycles
+let modeSwitchPromise = Promise.resolve()
 
 // ====================================================================
 // HELPERS
@@ -130,6 +173,48 @@ function isSecureContextLocal() {
     host === '127.0.0.1' ||
     host === '::1'
   )
+}
+
+function ttsSpeakingNow() {
+  try {
+    return typeof isTTSSpeaking === 'function' ? !!isTTSSpeaking() : !!isTTSSpeaking
+  } catch {
+    return false
+  }
+}
+
+// ===== Graph reconfiguration support =====
+
+function snapshotGraphParams(p) {
+  return {
+    ENABLE_PREFILTER: !!p.ENABLE_PREFILTER,
+    ENABLE_ANALYSER_VAD: !!p.ENABLE_ANALYSER_VAD,
+    ANALYSER_FFT_SIZE: p.ANALYSER_FFT_SIZE,
+    HPF_FREQ: p.HPF_FREQ,
+    LPF_FREQ: p.LPF_FREQ
+  }
+}
+
+// If these differ, the connection graph might need rewiring.
+function needsGraphRebuild(prevSnap, nextSnap) {
+  if (!prevSnap) return true
+  // Changing enable flags requires rewiring. FFT size / freqs can be updated live.
+  if (prevSnap.ENABLE_PREFILTER !== nextSnap.ENABLE_PREFILTER) return true
+  if (prevSnap.ENABLE_ANALYSER_VAD !== nextSnap.ENABLE_ANALYSER_VAD) return true
+  return false
+}
+
+// Apply tunables that are safe to update live (no rewiring)
+function applyLiveGraphTunables(p) {
+  try {
+    if (hp) hp.frequency.value = p.HPF_FREQ
+  } catch {}
+  try {
+    if (lp) lp.frequency.value = p.LPF_FREQ
+  } catch {}
+  try {
+    if (analyser) analyser.fftSize = p.ANALYSER_FFT_SIZE
+  } catch {}
 }
 
 // ====================================================================
@@ -192,6 +277,8 @@ export async function initializeSTT() {
     }
 
     addMessage('Speech recognition ready! Click the microphone to start.', false)
+
+    INIT_AI_MESSAGES()
     showRecording(false)
   } catch (error) {
     console.error('Failed to load STT model:', error)
@@ -212,7 +299,7 @@ export async function start() {
       try {
         const permissionStatus = await navigator.permissions.query({ name: 'microphone' })
         if (permissionStatus.state === 'denied') throw new Error('Microphone access denied')
-      } catch (permError) {
+      } catch {
         // ignore
       }
     }
@@ -241,10 +328,16 @@ export async function start() {
 
     rec = true
     buffers = []
+    prerollBuffer = []
+    speechDetected = false
     lastSpeechTS = performance.now()
+
     ctx = new AudioContext()
     src = ctx.createMediaStreamSource(stream)
     proc = ctx.createScriptProcessor(4096, 1, 1)
+
+    // Build the graph according to *currentParameters* and snapshot it.
+    lastGraphParams = snapshotGraphParams(currentParameters)
 
     // set up optional prefilter and analyser (connect before processor)
     if (currentParameters.ENABLE_PREFILTER) {
@@ -265,26 +358,45 @@ export async function start() {
           analyser = ctx.createAnalyser()
           analyser.fftSize = currentParameters.ANALYSER_FFT_SIZE
           lp.connect(analyser)
+        } else {
+          analyser = null
         }
       } catch (e) {
         console.warn('prefilter setup failed, falling back to direct source->processor:', e)
-        try { src.connect(proc) } catch (e) {}
+        try {
+          src.connect(proc)
+        } catch {}
+        hp = null
+        lp = null
+        analyser = null
       }
     } else {
-      src.connect(proc)
+      try {
+        src.connect(proc)
+      } catch {}
+      hp = null
+      lp = null
+      analyser = null
     }
 
     proc.onaudioprocess = e => {
       if (!rec) return
-      const ch = e.inputBuffer.getChannelData(0)
 
-      // Optional analyser-based gating: skip frames whose spectral energy is
-      // mostly outside the configured human vocal band.
+      if (ttsSpeakingNow()) return
+
+      const ch = e.inputBuffer.getChannelData(0)
+      const currentFrame = new Float32Array(ch)
+      const currentRMS = rms(ch)
+      const sampleRate = ctx ? ctx.sampleRate : 48000
+
+      let analyserPass = true
       if (currentParameters.ENABLE_ANALYSER_VAD && analyser) {
         try {
           const freqData = new Uint8Array(analyser.frequencyBinCount)
           analyser.getByteFrequencyData(freqData)
-          let inBand = 0, total = 0
+
+          let inBand = 0
+          let total = 0
 
           const binSize = (ctx.sampleRate || 48000) / analyser.fftSize
           const lowBin = Math.max(0, Math.floor(currentParameters.VAD_BAND_LOW / binSize))
@@ -297,117 +409,83 @@ export async function start() {
             total += freqData[i]
             if (i >= lowBin && i <= highBin) inBand += freqData[i]
           }
+
           const ratio = total > 0 ? inBand / total : 0
-          if (ratio < currentParameters.VAD_ENERGY_RATIO) {
-            // treat as non-vocal frame; do not append
-            return
-          }
+          analyserPass = ratio >= currentParameters.VAD_ENERGY_RATIO
         } catch (err) {
           console.warn('analyser gating failed:', err)
+          analyserPass = true
         }
       }
 
-      buffers.push(new Float32Array(ch))
-      // compute total buffered duration (seconds) from current buffers
+      if (!speechDetected) {
+        const prerollSamples = Math.floor((currentParameters.PREROLL_MS / 1000) * sampleRate)
+
+        prerollBuffer.push(currentFrame)
+
+        let prerollTotalSamples = 0
+        for (const b of prerollBuffer) prerollTotalSamples += b.length
+        while (prerollTotalSamples > prerollSamples && prerollBuffer.length > 1) {
+          const removed = prerollBuffer.shift()
+          prerollTotalSamples -= removed.length
+        }
+
+        if (currentRMS >= currentParameters.VAD_RMS && analyserPass) {
+          speechDetected = true
+          buffers.push(...prerollBuffer)
+          prerollBuffer = []
+        }
+      } else {
+        buffers.push(currentFrame)
+      }
+
       try {
         let totalSamples = 0
         for (const b of buffers) totalSamples += b.length
-        const sampleRate = ctx ? ctx.sampleRate : 48000
         updateVADDuration(totalSamples / sampleRate)
-      } catch (e) {
-        try { updateVADDuration(null) } catch (e) {}
+      } catch {
+        try {
+          updateVADDuration(null)
+        } catch {}
       }
 
-      // update last speech timestamp when energy is above VAD threshold
-      if (rms(ch) >= currentParameters.VAD_RMS) {
+      if (currentRMS >= currentParameters.VAD_RMS) {
         lastSpeechTS = performance.now()
-        // clear countdown while voice is active
-        try { updateVADCountdown(null) } catch (e) {}
-      } else {
-        // if we've been silent for longer than the configured threshold,
-        // capture the current buffers as a segment and process them
-        const silentFor = performance.now() - lastSpeechTS
-        // update countdown display (seconds, one decimal)
         try {
-          updateVADCountdown(
-            Math.max(0, (currentParameters.VAD_SILENCE_MS - silentFor) / 1000)
-          )
-        } catch (e) {}
+          updateVADCountdown(null)
+        } catch {}
+      } else {
+        const silentFor = performance.now() - lastSpeechTS
+        try {
+          updateVADCountdown(Math.max(0, (currentParameters.VAD_SILENCE_MS - silentFor) / 1000))
+        } catch {}
 
-        if (silentFor > currentParameters.VAD_SILENCE_MS && buffers.length && !processingSegment) {
+        if (
+          speechDetected &&
+          !processingSegment &&
+          buffers.length &&
+          silentFor > currentParameters.VAD_SILENCE_MS + currentParameters.POSTROLL_MS
+        ) {
           processingSegment = true
+          speechDetected = false
 
-          // hide countdown and duration while processing
-          try { updateVADCountdown(null) } catch (e) {}
-          try { updateVADDuration(null) } catch (e) {}
+          try {
+            updateVADCountdown(null)
+          } catch {}
+          try {
+            updateVADDuration(null)
+          } catch {}
 
-          // copy buffers for processing and synchronously compute a short
-          // tail slice to preserve at the head of the next buffer batch.
           const localBuffers = buffers.slice()
-
-          try {
-            let totalLen = 0
-            for (const b of localBuffers) totalLen += b.length
-            if (totalLen > 0) {
-              const sampleRate = ctx ? ctx.sampleRate : 48000
-              const tailSamples = Math.min(
-                totalLen,
-                Math.floor(currentParameters.BUFFER_TAIL_SECONDS * sampleRate)
-              )
-              if (tailSamples > 0) {
-                const tail = new Float32Array(tailSamples)
-                // copy last `tailSamples` from localBuffers into tail
-                let destOff = 0
-                const startIndex = totalLen - tailSamples
-                let readPos = 0
-                for (const b of localBuffers) {
-                  const bLen = b.length
-                  const bCopyFrom = Math.max(0, startIndex - readPos)
-                  const bCopyLen = Math.max(
-                    0,
-                    Math.min(bLen - bCopyFrom, tailSamples - destOff)
-                  )
-                  if (bCopyLen > 0) {
-                    tail.set(b.subarray(bCopyFrom, bCopyFrom + bCopyLen), destOff)
-                    destOff += bCopyLen
-                    if (destOff >= tailSamples) break
-                  }
-                  readPos += bLen
-                }
-                tailBuffer = tail
-              } else {
-                tailBuffer = null
-              }
-            } else {
-              tailBuffer = null
-            }
-          } catch (err) {
-            console.warn('tail computation failed:', err)
-            tailBuffer = null
-          }
-
-          // clear live buffers and prepend tailBuffer so recording continues
-          try {
-            let _totalSamplesBeforeReset = 0
-            for (const b of localBuffers) _totalSamplesBeforeReset += b.length
-            const _sampleRateBeforeReset = ctx ? ctx.sampleRate : 48000
-            /*
-            console.log(
-              'Reset buffers — previous buffer length:',
-              (_totalSamplesBeforeReset / _sampleRateBeforeReset).toFixed(1) + 's'
-            )
-              */
-          } catch (err) {}
-
           buffers = []
-          if (tailBuffer && tailBuffer.length) buffers.push(tailBuffer)
+          prerollBuffer = []
 
           ;(async () => {
             try {
-              // assemble mono
               let total = 0
               for (const b of localBuffers) total += b.length
               if (total === 0) return
+
               const mono = new Float32Array(total)
               let off = 0
               for (const b of localBuffers) {
@@ -419,46 +497,43 @@ export async function start() {
               const duration = pcm.length / currentParameters.SAMPLE_RATE
               const energyOriginal = rms(pcm)
 
-              // Gate on original energy (before leveling/compression)
-              if (
-                duration >= currentParameters.MIN_SEG_SECONDS &&
-                energyOriginal >= currentParameters.MIN_RMS
-              ) {
-                // --- Volume leveling + simple peak compression ---
+              if (duration >= currentParameters.MIN_SEG_SECONDS && energyOriginal >= currentParameters.MIN_RMS) {
                 if (currentParameters.ENABLE_LEVELING) {
-                  const currentRMS = energyOriginal
-                  if (currentRMS > 0) {
-                    // Compute desired gain and clamp to MAX_GAIN
-                    let gain = currentParameters.TARGET_RMS / currentRMS
+                  const currentRMS2 = energyOriginal
+                  if (currentRMS2 > 0) {
+                    let gain = currentParameters.TARGET_RMS / currentRMS2
                     if (gain > currentParameters.MAX_GAIN) gain = currentParameters.MAX_GAIN
 
                     for (let i = 0; i < pcm.length; i++) {
                       let v = pcm[i] * gain
 
-                      // Soft compression on peaks above COMP_THRESHOLD
                       const av = Math.abs(v)
                       if (av > currentParameters.COMP_THRESHOLD) {
                         const sign = v < 0 ? -1 : 1
                         const over = av - currentParameters.COMP_THRESHOLD
-                        // Reduce "over" portion by COMP_RATIO
                         const compressed =
                           currentParameters.COMP_THRESHOLD + over / currentParameters.COMP_RATIO
                         v = sign * compressed
                       }
 
-                      // Final hard clamp to avoid numeric clipping
                       if (v > 1) v = 1
                       if (v < -1) v = -1
                       pcm[i] = v
                     }
                   }
                 }
-                // -------------------------------------------------
 
+                const transcribeStart = performance.now()
                 const result = await asr(pcm, {
                   prompt: currentParameters.commandPrompt,
                   condition_on_prev_text: false
                 })
+                const transcribeEnd = performance.now()
+                const transcribeDuration = ((transcribeEnd - transcribeStart) / 1000).toFixed(2)
+
+                const durationEl = document.getElementById('transcribe-duration')
+                if (durationEl) durationEl.textContent = `Transcription: ${transcribeDuration}s`
+
                 const text = (result?.text || '').trim()
                 if (text) processSpeechText(text)
               }
@@ -472,11 +547,8 @@ export async function start() {
       }
     }
 
-    // processor must be connected to destination for ScriptProcessor to run
     proc.connect(ctx.destination)
     showRecording(true)
-
-    // start duration tracking
     recordStartTS = performance.now()
   } catch (error) {
     console.error('Failed to start recording:', error)
@@ -496,54 +568,132 @@ export async function start() {
 // POST-ASR: PROCESS RECOGNIZED TEXT
 // ====================================================================
 
-function processSpeechText(newText) {
-  lastSpeech = newText
+function incWakeWordCounter() {
+  wakewordCounter += 1
+  const wakewordCounterEl = document.getElementById('wakeword-counter')
+  if (wakewordCounterEl) wakewordCounterEl.textContent = String(wakewordCounter)
+}
 
-  if (newText) {
-    messageInput.value = newText
-    messageInput.focus()
+function incExactWakeWordCounter() {
+  exactWakewordCounter += 1
+  const exactWakeWordCounterEl = document.getElementById('exact-wakeword-counter')
+  if (exactWakeWordCounterEl) exactWakeWordCounterEl.textContent = String(exactWakewordCounter)
+}
 
-    // if the first word contains (in any case) CHAT_NAME, submit to the HUB
-    try {
-      let textCommand = textAfterWord(newText, CHAT_NAME)
+/**
+ * HARD BUG FIX:
+ * - setActiveMode is async (can stop/start).
+ * - We must not let mode flips overlap; serialize them via modeSwitchPromise.
+ * - Callers should await it.
+ */
+function setActiveMode(isOn) {
+  modeSwitchPromise = modeSwitchPromise.then(async () => {
+    const prevSnap = lastGraphParams
+    activeMode = isOn
+    currentParameters = isOn ? activeModeParams : wakeWordParams
 
-      if (textCommand !== null) {
-        // If you want to force a prefix, uncomment:
-        // textCommand = "FORCE " + textCommand;
+    const nextSnap = snapshotGraphParams(currentParameters)
+    console.log('Active mode set to:', isOn)
 
-        messageInput.value = textCommand
-        messageInput.focus()
-
-        // play "success" sound
-        playSound(480, 200, 0.12)
-        // trigger the same submit action as the UI
-        clickSubmitButton()
+    if (rec && needsGraphRebuild(prevSnap, nextSnap)) {
+      try {
+        await stop()
+        await start()
+        return
+      } catch (e) {
+        console.warn('Failed to rebuild audio graph on mode switch:', e)
       }
-    } catch (e) {
-      console.warn('wakeword-check error', e)
     }
 
-    console.log(newText)
-  } else {
-    addMessage('(No text recognized, try again)', false)
+    applyLiveGraphTunables(currentParameters)
+    lastGraphParams = nextSnap
+  })
+
+  return modeSwitchPromise
+}
+
+// Make async so we can await mode flips safely
+async function processSpeechText(newText) {
+  lastSpeech = newText
+
+  if (!newText) return
+
+  const trimmed = newText.trim()
+
+  const isSoundTag =
+    (trimmed.startsWith('(') && trimmed.endsWith(')')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+
+  if (isSoundTag) {
+    console.log('~~~ IGNORE:', trimmed)
+    return
   }
+
+  console.log(newText)
+
+  //-----------------
+  // FOR TESTING:
+  //-----------------
+  if(testingParams){
+
+    if(containsText(newText, CHAT_NAME)) {
+      incExactWakeWordCounter()
+    }
+    if(containsWord(newText, CHAT_NAME)) {
+      incWakeWordCounter()
+    } 
+    return;
+  }
+
+
+  // WAKE + COMMAND HANDLING
+  const commandText = textAfterWord(newText, CHAT_NAME)
+  if (commandText !== null && commandText.length > 0) {
+    await processCommand(commandText)
+    return
+  }
+
+  // WAKE WORD HANDLING (wake only)
+  if (!activeMode && containsWord(trimmed, CHAT_NAME)) {
+    await setActiveMode(true)
+
+    // ✅ ONLY CHANGE YOU REQUESTED:
+    // beep when switching to active mode with wake word only (no simultaneous command)
+    playSound(720, 200, 0.18)
+
+    return
+  }
+
+  // COMMAND HANDLING (only when active)
+  if (!activeMode) return
+
+  await processCommand(trimmed)
+}
+
+// process a command, and set inactive
+async function processCommand(newText) {
+  messageInput.value = newText
+  messageInput.focus()
+
+  clickSubmitButton()
+
+  // IMPORTANT: await deactivation so stop/start doesn't overlap with other events
+  await setActiveMode(false)
 }
 
 export function getFirstWord(text) {
   return (text.split(/\s+/)[0] || '').toUpperCase()
 }
 
-// Return the substring of `newText` that occurs after the first occurrence of
-// `newWord` (case-insensitive, word-boundary match). If `newWord` is not
-// present, return null.
+
+
+// Return substring after first approx match of wake word (Levenshtein <= 2).
 export function textAfterWord(newText, newWord) {
-  // make lower-case for comparison
   newText = String(newText).toLocaleLowerCase()
   newWord = String(newWord).toLocaleLowerCase()
 
   if (!newText || !newWord) return null
 
-  // Find first word in the text whose Levenshtein distance to newWord is <= 2
   const wordRe = /\b[0-9a-z]+\b/gi
   let m
   while ((m = wordRe.exec(newText)) !== null) {
@@ -560,6 +710,25 @@ export function textAfterWord(newText, newWord) {
   return null
 }
 
+export function containsWord(newText, newWord) {
+  newText = String(newText).toLocaleLowerCase()
+  newWord = String(newWord).toLocaleLowerCase()
+
+  if (!newText || !newWord) return false
+
+  const wordRe = /\b[0-9a-z]+\b/gi
+  let m
+  while ((m = wordRe.exec(newText)) !== null) {
+    const token = m[0].toLowerCase()
+    const dist = levenshtein(token, newWord)
+    if (dist <= 2) {
+      return true
+    }
+  }
+
+  return false
+}
+
 // Levenshtein distance helper
 function levenshtein(a, b) {
   if (a === b) return 0
@@ -574,11 +743,7 @@ function levenshtein(a, b) {
     v1[0] = i + 1
     for (let j = 0; j < lb; j++) {
       const cost = a[i] === b[j] ? 0 : 1
-      v1[j + 1] = Math.min(
-        v1[j] + 1,
-        v0[j + 1] + 1,
-        v0[j] + cost
-      )
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost)
     }
     for (let j = 0; j <= lb; j++) v0[j] = v1[j]
   }
@@ -603,25 +768,32 @@ export async function stop() {
   rec = false
   showRecording(false)
 
-  try { proc.disconnect() } catch {}
-  try { src.disconnect() } catch {}
-  try { stream && stream.getTracks().forEach(t => t.stop()) } catch {}
-  try { ctx && await ctx.close() } catch {}
-
   try {
-    let _total = 0
-    for (const b of buffers) _total += b.length
-    const _sr = ctx ? ctx.sampleRate : 48000
-    /*
-    console.log(
-      'Reset buffers (stop) — previous buffer length:',
-      (_total / _sr).toFixed(1) + 's'
-    )
-      */
-  } catch (e) {}
+    proc && proc.disconnect()
+  } catch {}
+  try {
+    src && src.disconnect()
+  } catch {}
+  try {
+    stream && stream.getTracks().forEach(t => t.stop())
+  } catch {}
+  try {
+    ctx && (await ctx.close())
+  } catch {}
+
   buffers = []
-  tailBuffer = null
+  prerollBuffer = []
+  speechDetected = false
+
+  hp = null
+  lp = null
+  analyser = null
+  proc = null
+  src = null
+  ctx = null
+  stream = null
 }
 
-// Backwards-compat: expose on window so older code calling global activateMic still works
-try { window.activateMic = activateMic } catch (e) {}
+try {
+  window.activateMic = activateMic
+} catch {}

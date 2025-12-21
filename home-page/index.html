@@ -89,7 +89,7 @@ import { initializeConnection } from './src/a2a.js'
 import { initializeSTT } from './src/stt.js'
 
 // Initialize the model (non-blocking if already initialized)
-await initializeSTT()
+//await initializeSTT()
 
 
 
@@ -150,6 +150,17 @@ document.getElementById('piperSpeakButton').addEventListener('click', async () =
 });
 
 		</script>
+
+
+<span id="exact-wakeword-counter">0</span>
+/
+<span id="wakeword-counter">0</span>
+
+
+
+<p>------</p>
+
+<p id="transcribe-duration"></p>
 
 
 	</body>

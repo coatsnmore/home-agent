@@ -162,6 +162,13 @@ uv run src/hubitat.py
 - Requires Hubitat MCP Server to be running
 - Requires Hubitat Hub to be accessible via API
 
+**Evaluation** (`src/agents/hubitat_eval.py`):
+- Tool-selection evaluation using Strands Evals SDK (TrajectoryEvaluator)
+- Runs against **live** MCP and agent (Docker or local)
+- **HTTP**: `GET` or `POST` `<host>/hubitat/evaluate` (or `https://<host>/hubitat/evaluate` via nginx)
+- **Standalone**: `uv run hubitat-eval` or `docker exec hubitat-agent uv run hubitat-eval`
+- Test cases: "Turn on all the lights" (list_devices → device_details → control_device), "What temperature is it?" (list_devices → device_details)
+
 ---
 
 ## MCP Server

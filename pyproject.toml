@@ -5,8 +5,8 @@ description = "Local AI agent using Strands with Ollama"
 requires-python = ">=3.12"
 
 dependencies = [
-    "strands-agents[a2a,ollama,openai]==1.9.0",
-    "strands-agents-tools[a2a_client]==0.2.8",
+    "strands-agents[a2a,ollama,openai]==1.21.0",
+    "strands-agents-tools[a2a_client]==0.2.19",
     "python-dotenv",
     "SpeechRecognition",
     "PyAudio",
@@ -15,12 +15,14 @@ dependencies = [
     "requests>=2.32.4",
     "websockets>=12.0",
     "pyttsx3>=2.99",
+    "strands-agents-evals>=0.1.5",
 ]
 
 [project.scripts]
 home-agent = "src.agents.home_a2a:main"
 hubitat-agent = "src.agents.hubitat_a2a:main"
 hubitat-mcp = "src.mcp.hubitat_mcp:main"
+hubitat-eval = "src.agents.hubitat_eval:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -3,6 +3,7 @@ from strands_tools.mcp_client import MCPClient
 from mcp.client.streamable_http import streamablehttp_client
 from strands.multiagent.a2a import A2AServer
 from .llm_provider import get_model
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from dotenv import load_dotenv
@@ -34,7 +35,7 @@ def main():
             """,
             system_prompt="""
             You are a Hubitat Agent that can control and monitor a Hubitat smart home system. 
-            List the tools you have access to.
+            List the tools you have access to and use them to perform tasks.
             """,
             model=model,
             tools=tools
@@ -55,7 +56,24 @@ def main():
 
         # Enable CORS for all origins
         app = a2a_server.to_fastapi_app()
-        
+
+        # Store tools and model for the evaluation endpoint (live service eval)
+        app.state.hubitat_tools = tools
+        app.state.hubitat_model = model
+
+        # Evaluation endpoint: run Hubitat tool-selection eval against live MCP
+        from . import hubitat_eval
+
+        @app.get("/hubitat/evaluate")
+        @app.post("/hubitat/evaluate")
+        def run_hubitat_evaluate(request: Request):
+            """Run Hubitat agent tool-selection evaluation using live MCP and return results."""
+            tools = getattr(request.app.state, "hubitat_tools", None)
+            model = getattr(request.app.state, "hubitat_model", None)
+            if not tools or not model:
+                return {"error": "Agent tools/model not available"}
+            return hubitat_eval.run_evaluation(tools, model, agent.system_prompt)
+
         # Add CORS middleware - must be added first (before other middleware)
         app.add_middleware(
             CORSMiddleware,

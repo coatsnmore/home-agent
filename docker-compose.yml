@@ -95,21 +95,27 @@ services:
     restart: unless-stopped
   hubitat-mcp:
     build:
-      context: .
-      dockerfile: uv.Dockerfile
-    image: hubitat-mcp:dev
-    env_file: 
-        - .env
+      context: ../hubitat-mcp
+      dockerfile: Dockerfile
+    image: hubitat-mcp-docker:0.0.1
     container_name: hubitat-mcp
+    env_file:
+      - .env
     networks:
       - ollama-network
     volumes:
-      - .:/app
+      - ../hubitat-mcp:/app
+      - /app/.venv
+    entrypoint: []
     ports:
-      - "8888:8888"           # Expose a port (e.g., for a web server or API)
-    # environment:
-    #   - NODE_ENV=development  # Example environment variable (customize for your app)
-    command: /app/docker/hubitat-mcp.sh
+      - "8888:8888"
+    environment:
+      - HOST=${HUB_HOST}
+      - ACCESS_TOKEN=${HUB_ACCESS_TOKEN}
+      - FAST_MCP_LOG_LEVEL=ERROR
+      - LOG_LEVEL=ERROR
+      - MCP_PORT=8888
+    command: sh -c "uv sync && uvx watchfiles 'uv run hubitat-mcp --http-only' src"
     restart: unless-stopped
   home-page:
     build:

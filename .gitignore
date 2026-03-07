@@ -21,3 +21,5 @@ nginx/certbot/
 *.crt
 
 .DS_Store
+.venv/
+__pycache__/

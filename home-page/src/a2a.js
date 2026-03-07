@@ -16,10 +16,11 @@ const isDevelopment = import.meta.env.DEV
 // Detect if we're being served over HTTPS (via nginx proxy)
 const isHttps = window.location.protocol === 'https:'
 
-// Agent card URL - use nginx proxy path when served over HTTPS
-const agentCardUrl = isHttps
-  ? '/agent/.well-known/agent-card.json'
-  : 'http://localhost:9002/.well-known/agent-card.json'
+// Agent card URL - use nginx proxy path implicitly
+const agentCardUrl = isDevelopment && !isHttps
+  ? 'http://localhost:9002/.well-known/agent-card.json'
+  : '/agent/.well-known/agent-card.json'
+
 
 // Server URLs that need to be proxied
 const actualServerUrls = [
@@ -43,7 +44,7 @@ function createProxiedFetch() {
       urlString = String(url)
     }
 
-    if (urlString.startsWith('/') || urlString.startsWith('https://')) {
+    if (urlString.startsWith('/')) {
       return fetch(urlString, options)
     }
 
@@ -56,27 +57,29 @@ function createProxiedFetch() {
     if (isHttps) {
       let wasProxied = false
       for (const serverUrl of actualServerUrls) {
-        if (proxiedUrl.startsWith(serverUrl)) {
-          proxiedUrl = proxiedUrl.replace(serverUrl, '/agent')
+        if (proxiedUrl.startsWith(serverUrl) || proxiedUrl.startsWith(serverUrl.replace('http:', 'https:'))) {
+          proxiedUrl = proxiedUrl.replace(serverUrl, '/agent').replace(serverUrl.replace('http:', 'https:'), '/agent')
           wasProxied = true
           console.log(`[Proxy] Routing HTTPS: ${urlString} → ${proxiedUrl}`)
           break
         }
       }
 
-      if (!wasProxied && proxiedUrl.startsWith('http://')) {
-        const urlObj = new URL(proxiedUrl)
-        if (
-          urlObj.hostname === 'localhost' ||
-          urlObj.hostname === '127.0.0.1' ||
-          urlObj.hostname.includes('hubitat-agent') ||
-          urlObj.hostname.includes('hubitat-mcp') ||
-          urlObj.port === '9002' || urlObj.port === '9001'
-        ) {
-          const path = urlObj.pathname + urlObj.search + urlObj.hash
-          proxiedUrl = '/agent' + path
-          console.log(`[Proxy] Routing HTTPS (internal): ${urlString} → ${proxiedUrl}`)
-        }
+      if (!wasProxied) {
+        try {
+          const urlObj = new URL(proxiedUrl)
+          if (
+            urlObj.hostname === 'localhost' ||
+            urlObj.hostname === '127.0.0.1' ||
+            urlObj.hostname.includes('hubitat-agent') ||
+            urlObj.hostname.includes('hubitat-mcp') ||
+            urlObj.port === '9002' || urlObj.port === '9001'
+          ) {
+            const path = urlObj.pathname + urlObj.search + urlObj.hash
+            proxiedUrl = '/agent' + path
+            console.log(`[Proxy] Routing HTTPS (internal/port match): ${urlString} → ${proxiedUrl}`)
+          }
+        } catch (e) { }
       }
     } else {
       for (const serverUrl of actualServerUrls) {
@@ -86,6 +89,17 @@ function createProxiedFetch() {
           break
         }
       }
+    }
+
+    if (!isHttps && proxiedUrl === urlString) {
+      try {
+        const urlObj = new URL(proxiedUrl)
+        if (urlObj.port === '9002' || urlObj.port === '9001') {
+          const path = urlObj.pathname + urlObj.search + urlObj.hash
+          proxiedUrl = '/api/a2a' + path
+          console.log(`[Proxy] Routing HTTP (port match): ${urlString} → ${proxiedUrl}`)
+        }
+      } catch (e) { }
     }
 
     if (proxiedUrl !== urlString && url instanceof Request) {
@@ -178,7 +192,7 @@ export function uuidv4() {
     const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
     return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)].join('-')
   }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0
     const v = c === 'x' ? r : (r & 0x3) | 0x8
     return v.toString(16)
@@ -190,10 +204,10 @@ export async function sendMessage() {
   const messageText = messageInput.value.trim()
   if (!messageText || !isConnected || !a2aClient) return
 
-    sendMessageToHUB(messageText, responseCallback);
-    addMessage(messageText, true);
-    clearUserInput();
-    
+  sendMessageToHUB(messageText, responseCallback);
+  addMessage(messageText, true);
+  clearUserInput();
+
 }
 
 
@@ -258,10 +272,10 @@ export async function sendMessageToHUB(newMSG, newResponseCallback) {
 // Default responseCallback implementation – logs the A2A server response.
 export function responseCallback(a2aResponse) {
 
-    // right now, we only process basic text as a response
-    printResponseToChat(a2aResponse);
+  // right now, we only process basic text as a response
+  printResponseToChat(a2aResponse);
 
-    // TODO: process different types of responses
+  // TODO: process different types of responses
 
 }
 

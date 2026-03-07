@@ -1,40 +1,59 @@
-# Home Automation
+# Home Automation Agent System
 
-## Preprequisites
+A sophisticated multi-agent system for home automation, featuring a smarter "brain" for Hubitat control and long-term memory.
 
-* Docker
-* Python
-* UV package manager
+## Architecture Overview
 
-## Docker Compose
+This system utilizes the **Model Context Protocol (MCP)** and **Agent-to-Agent (A2A)** communication to provide a robust, extensible automation platform.
 
+### Smarter Hubitat Brain
+The Hubitat Agent has been enhanced with deep reasoning and persistence capabilities by integrating three distinct MCP servers:
+*   **Hubitat Control**: Direct device management via the [hubitat-mcp](https://github.com/coatsnmore/hubitat-mcp) repository.
+*   **Sequential Thinking**: Advanced multi-step reasoning for complex automation logic.
+*   **Memory / Knowledge Graph**: Persistence for user preferences and home state observations.
+
+## Prerequisites
+
+*   **Docker & Docker Compose**
+*   **Ollama**: For running local LLMs (e.g., `llama3.1`, `mistral`).
+*   **Python 3.12+** (with `uv` package manager).
+
+## Getting Started
+
+### 1. Infrastructure Setup
+Spin up the core services (Nginx proxy, Frontend, Hubitat MCP):
 ```bash
 docker compose up -d
 ```
 
-## Open Web UI
-
-1. Open the Open Web UI application in your browser at [`http://localhost:3000`](http://localhost:3000)
-1. Sign up an account. This stays local, but use credentials you don't care about. Use `admin@admin.com/admin`
-
-## Agent Setup
-
-Install uv. On Mac, you will need to install PortAudio via `brew install portaudio`.
-
+### 2. Local Environment Setup
+Install dependencies using the `uv` package manager:
 ```bash
-uv venv
-source .venv/bin/activate
 uv sync --all-packages
 ```
 
-## Example Prompts for Home Agent
-
+### 3. Configuration
+Create a `.env` file in the root directory:
+```ini
+HUB_HOST=http://<YOUR_HUB_IP>/apps/api/<APP_ID>/
+HUB_ACCESS_TOKEN=<YOUR_ACCESS_TOKEN>
+HOST_URL=https://<YOUR_DOCKER_HOST_IP>
+OLLAMA_ENDPOINT=http://localhost:11434
 ```
-With Hubitat Agent, list_devices and device_details. For each smart outlet, use device_commands and control_device to turn them off. 
-```
 
-## Run Basic Demo
+## Usage
 
-* Run Ollama (Run the App via Finder or whatever)
-* uv run hubitat-mcp
-* uv run src/hubitat.py
+### Web Interface
+Access the home dashboard via the secure Nginx proxy:
+*   **Frontend**: `https://<YOUR_IP>`
+*   **Agent Interaction**: Controlled via the relative `/agent` path.
+
+### Example Prompts
+*   "Turn off the office lights and remember that I prefer them at 20% in the evening."
+*   "Think about the most energy-efficient way to manage my thermostat during a heatwave."
+*   "List all sensors in the kitchen and tell me the current temperature."
+
+## Components
+*   **[hubitat-mcp](https://github.com/coatsnmore/hubitat-mcp)**: The official MCP server implementation for Hubitat.
+*   **A2A Server**: High-performance agent communication layer.
+*   **Nginx Proxy Layer**: Secure SSL termination and path-based routing.

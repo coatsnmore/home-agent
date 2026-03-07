@@ -1,15 +1,18 @@
 # Use a Python image with uv pre-installed
-FROM astral/uv:python3.12-bookworm-slim
+FROM astral/uv:python3.12-bookworm
 
 # Install build dependencies required for PyAudio
 # PyAudio needs gcc, make, and PortAudio development libraries
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    make \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libportaudio2 \
     portaudio19-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy Node.js and npm from the official Node image
+COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Install the project into `/app`
 WORKDIR /app

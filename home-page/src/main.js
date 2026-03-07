@@ -10,7 +10,7 @@ function uuidv4() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID()
   }
-  
+
   // Fallback: Use crypto.getRandomValues if available (more secure)
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     const bytes = new Uint8Array(16)
@@ -18,7 +18,7 @@ function uuidv4() {
     // Set version (4) and variant bits
     bytes[6] = (bytes[6] & 0x0f) | 0x40 // Version 4
     bytes[8] = (bytes[8] & 0x3f) | 0x80 // Variant 10
-    
+
     // Convert to UUID string format
     const hex = Array.from(bytes)
       .map(b => b.toString(16).padStart(2, '0'))
@@ -31,9 +31,9 @@ function uuidv4() {
       hex.slice(20, 32)
     ].join('-')
   }
-  
+
   // Final fallback: Use Math.random (less secure, but works everywhere)
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0
     const v = c === 'x' ? r : (r & 0x3) | 0x8
     return v.toString(16)
@@ -42,12 +42,12 @@ function uuidv4() {
 
 // Filter out harmless ONNX Runtime warnings about unused initializers
 const originalWarn = console.warn
-console.warn = function(...args) {
+console.warn = function (...args) {
   const message = args.join(' ')
   // Suppress ONNX Runtime warnings about unused initializers (harmless optimization warnings)
-  if (message.includes('CleanUnusedInitializersAndNodeArgs') || 
-      message.includes('Removing initializer') ||
-      message.includes('It is not used by any node')) {
+  if (message.includes('CleanUnusedInitializersAndNodeArgs') ||
+    message.includes('Removing initializer') ||
+    message.includes('It is not used by any node')) {
     return // Suppress these warnings
   }
   originalWarn.apply(console, args)
@@ -59,10 +59,10 @@ function isSecureContext() {
   // Normalize IPv6 loopback (some browsers expose it as ::1 without brackets)
   const host = (location.hostname || '').replace(/^\[|\]$/g, '')
   return window.isSecureContext ||
-         location.protocol === 'https:' ||
-         host === 'localhost' ||
-         host === '127.0.0.1' ||
-         host === '::1'
+    location.protocol === 'https:' ||
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1'
 }
 
 // Initialize A2A client - connect to home agent on port 9001
@@ -119,10 +119,10 @@ function playSound(frequency = 480, durationMs = 200, volume = 0.12) {
       gain.gain.linearRampToValueAtTime(0, stopAt)
       try {
         osc.stop(stopAt)
-      } catch (e) {}
+      } catch (e) { }
       // Close audio context shortly after stop to free resources
       setTimeout(() => {
-        try { ac.close() } catch (e) {}
+        try { ac.close() } catch (e) { }
       }, 50)
     }, durationMs)
   } catch (e) {
@@ -155,7 +155,7 @@ function clickSubmitButton() {
     }
 
     // first word is NOT wake word...
-    else{
+    else {
 
       // play "fail" sound
       playSound(240, 200, 0.12);
@@ -167,7 +167,7 @@ function clickSubmitButton() {
     }
   } catch (e) {
     console.log('clickSubmitButton: error parsing input')
-    
+
   }
   submitButton.click()
 }
@@ -183,7 +183,7 @@ function addMessage(text, isUser = false) {
   messageDiv.textContent = text
   messagesContainer.appendChild(messageDiv)
   messagesContainer.scrollTop = messagesContainer.scrollHeight
-  
+
   // (TTS removed) — agent messages are shown only as text in the UI
 }
 
@@ -206,14 +206,15 @@ const isDevelopment = import.meta.env.DEV
 
 // Detect if we're being served over HTTPS (via nginx proxy)
 const isHttps = window.location.protocol === 'https:'
-const baseUrl = isHttps 
+const baseUrl = isHttps
   ? window.location.origin  // Use current origin (https://localhost)
   : window.location.origin
 
-// Agent card URL - use nginx proxy path when served over HTTPS
-const agentCardUrl = isHttps
-  ? '/agent/.well-known/agent-card.json'  // Use nginx HTTPS proxy
-  : 'http://localhost:9002/.well-known/agent-card.json'  // Direct HTTP for local development
+// Agent card URL - use nginx proxy path implicitly
+const agentCardUrl = isDevelopment && !isHttps
+  ? 'http://localhost:9002/.well-known/agent-card.json'
+  : '/agent/.well-known/agent-card.json'
+
 
 // Server URLs that need to be proxied
 const actualServerUrls = [
@@ -229,7 +230,7 @@ function createProxiedFetch() {
   // Always use proxy when served over HTTPS to avoid mixed content issues
   return async (url, options = {}) => {
     let urlString = ''
-    
+
     // Extract URL string from different input types
     if (typeof url === 'string') {
       urlString = url
@@ -240,20 +241,21 @@ function createProxiedFetch() {
     } else {
       urlString = String(url)
     }
-    
+
     // If already a relative URL or HTTPS, use as-is
     if (urlString.startsWith('/') || urlString.startsWith('https://')) {
       return fetch(urlString, options)
     }
-    
+
     // Check if URL matches any A2A server and replace with HTTPS proxy
     let proxiedUrl = urlString
-    
+
     // Replace 0.0.0.0 with localhost first (0.0.0.0 is a binding address, not a valid URL)
     if (urlString.includes('0.0.0.0')) {
       proxiedUrl = urlString.replace(/http:\/\/0\.0\.0\.0:/g, 'http://localhost:')
-w    }
-    
+      w
+    }
+
     // When served over HTTPS, proxy HTTP requests through nginx
     if (isHttps) {
       // Check for HTTP URLs that need to be proxied
@@ -267,18 +269,18 @@ w    }
           break
         }
       }
-      
+
       // Also handle Docker service names or other HTTP URLs that might appear
       // (e.g., from agent card that returns http://hubitat-agent:9002)
       if (!wasProxied && proxiedUrl.startsWith('http://')) {
         // Check if it's a local/internal URL that should be proxied
         const urlObj = new URL(proxiedUrl)
         // If it's localhost, 127.0.0.1, or a Docker service name, proxy it
-        if (urlObj.hostname === 'localhost' || 
-            urlObj.hostname === '127.0.0.1' ||
-            urlObj.hostname.includes('hubitat-agent') ||
-            urlObj.hostname.includes('hubitat-mcp') ||
-            urlObj.port === '9002' || urlObj.port === '9001') {
+        if (urlObj.hostname === 'localhost' ||
+          urlObj.hostname === '127.0.0.1' ||
+          urlObj.hostname.includes('hubitat-agent') ||
+          urlObj.hostname.includes('hubitat-mcp') ||
+          urlObj.port === '9002' || urlObj.port === '9001') {
           // Extract the path and proxy through nginx
           const path = urlObj.pathname + urlObj.search + urlObj.hash
           proxiedUrl = '/agent' + path
@@ -295,12 +297,12 @@ w    }
         }
       }
     }
-    
+
     // If we need to proxy and the original was a Request, extract all properties
     if (proxiedUrl !== urlString && url instanceof Request) {
       const clonedRequest = url.clone()
       const headers = new Headers(clonedRequest.headers)
-      
+
       // Try to get the body
       let body = null
       try {
@@ -315,7 +317,7 @@ w    }
       } catch (e) {
         console.warn('Could not read request body:', e)
       }
-      
+
       return fetch(proxiedUrl, {
         method: clonedRequest.method,
         headers: headers,
@@ -327,7 +329,7 @@ w    }
         ...options
       })
     }
-    
+
     // For string URLs or if no proxy needed
     return fetch(proxiedUrl, options)
   }
@@ -338,7 +340,7 @@ async function initializeConnection() {
   try {
     updateStatus(false)
     addMessage('Connecting to Hubitat Agent...', false)
-    
+
     // Test connection (skip proxy test when using nginx HTTPS proxy)
     if (isDevelopment && !isHttps) {
       addMessage('Testing proxy connection...', false)
@@ -354,12 +356,12 @@ async function initializeConnection() {
         throw new Error('Proxy not available. Please restart the Vite dev server.')
       }
     }
-    
+
     // Create client from agent card URL with custom fetch for proxy support
     addMessage('Fetching agent card from: ' + agentCardUrl, false)
     const customFetch = createProxiedFetch()
     a2aClient = await A2AClient.fromCardUrl(agentCardUrl, { fetchImpl: customFetch })
-    
+
     updateStatus(true)
     addMessage('Connected! You can now chat with the Hubitat Agent.', false)
   } catch (error) {
@@ -428,7 +430,7 @@ async function sendMessage() {
           if (event.contextId) {
             contextId = event.contextId
           }
-          
+
           // Extract text from task history messages
           if (event.history && Array.isArray(event.history)) {
             const historyText = event.history
@@ -441,14 +443,14 @@ async function sendMessage() {
                   .join('')
               })
               .join('\n')
-            
+
             if (historyText) {
               fullResponse = historyText
               responseDiv.textContent = fullResponse
               messagesContainer.scrollTop = messagesContainer.scrollHeight
             }
           }
-          
+
           // Also check for artifacts in the task
           if (event.artifacts && Array.isArray(event.artifacts)) {
             const artifactTexts = event.artifacts
@@ -461,7 +463,7 @@ async function sendMessage() {
               })
               .filter(text => text.length > 0)
               .join('\n\n')
-            
+
             if (artifactTexts) {
               fullResponse = fullResponse ? `${fullResponse}\n\n${artifactTexts}` : artifactTexts
               responseDiv.textContent = fullResponse
@@ -480,7 +482,7 @@ async function sendMessage() {
             .filter(p => p.kind === 'text')
             .map(p => p.text)
             .join('')
-          
+
           if (artifactText) {
             fullResponse = fullResponse ? `${fullResponse}\n\n${artifactText}` : artifactText
             responseDiv.textContent = fullResponse
@@ -488,7 +490,7 @@ async function sendMessage() {
           }
         }
       }
-      
+
       // Remove streaming class when done
       if (responseDiv) {
         responseDiv.className = 'message agent-message'
@@ -498,7 +500,7 @@ async function sendMessage() {
       // If streaming fails, fall back to non-streaming
       console.log('Streaming not available, using non-streaming:', streamError)
       const response = await a2aClient.sendMessage({ message })
-      
+
       if (a2aClient.isErrorResponse(response)) {
         addMessage(`Error: ${response.error.message}`, false)
         return
@@ -515,7 +517,7 @@ async function sendMessage() {
       } else if (result.kind === 'task') {
         // Extract text from task history and artifacts
         let taskText = ''
-        
+
         // Get text from task history (agent messages)
         if (result.history && Array.isArray(result.history)) {
           const historyText = result.history
@@ -529,12 +531,12 @@ async function sendMessage() {
             })
             .filter(text => text.length > 0)
             .join('\n')
-          
+
           if (historyText) {
             taskText = historyText
           }
         }
-        
+
         // Get text from artifacts
         if (result.artifacts && Array.isArray(result.artifacts)) {
           const artifactTexts = result.artifacts
@@ -547,19 +549,19 @@ async function sendMessage() {
             })
             .filter(text => text.length > 0)
             .join('\n\n')
-          
+
           if (artifactTexts) {
             taskText = taskText ? `${taskText}\n\n${artifactTexts}` : artifactTexts
           }
         }
-        
+
         // Display the text or fallback to status
         if (taskText) {
           addMessage(taskText, false)
         } else {
           addMessage(`Task ${result.id}: ${result.status.state}`, false)
         }
-        
+
         if (result.contextId) {
           contextId = result.contextId
         }
@@ -638,7 +640,7 @@ async function initializeSTT() {
       transformersReady: window.transformersReady,
       transformersPipeline: typeof window.transformersPipeline
     })
-    
+
     // Try to load from CDN dynamically if not already loaded
     if (!window.transformersPipeline) {
       console.log('Transformers not found in window, loading from CDN...')
@@ -655,21 +657,21 @@ async function initializeSTT() {
         throw new Error(`Failed to load transformers from CDN: ${cdnError.message}`)
       }
     }
-    
+
     // Wait a bit more if still not ready
     let waitCount = 0
     while (!window.transformersReady && waitCount < 50) {
       await new Promise(resolve => setTimeout(resolve, 100))
       waitCount++
     }
-    
+
     if (!window.transformersPipeline) {
       throw new Error('Transformers pipeline not available after loading attempt')
     }
-    
+
     const pipeline = window.transformersPipeline
     const env = window.transformersEnv
-    
+
     // Configure transformers environment for better compatibility
     if (env) {
       // Configure to use HuggingFace through proxy in development
@@ -687,11 +689,11 @@ async function initializeSTT() {
         allowLocalModels: env.allowLocalModels
       })
     }
-    
+
     console.log('Pipeline obtained, loading Whisper model...')
     console.log('This may take a moment on first load as the model downloads...')
     console.log('Model will be cached for offline use after first download')
-    
+
     // Load the model - use quantized version for faster download and smaller size
     // The model files will be cached in IndexedDB for offline use
     try {
@@ -705,12 +707,12 @@ async function initializeSTT() {
         quantized: false,
       })
     }
-    
+
     console.log('Whisper model loaded successfully')
     addMessage('Speech recognition ready! Click the microphone to start.', false)
-  micButton.disabled = false
-  micButton.innerHTML = '🎤'
-  micButton.title = 'Start voice input'
+    micButton.disabled = false
+    micButton.innerHTML = '🎤'
+    micButton.title = 'Start voice input'
   } catch (error) {
     console.error('Failed to load STT model:', error)
     console.error('Error details:', error.stack)
@@ -729,13 +731,13 @@ async function doStartRecording() {
     if (!window.isSecureContext) {
       throw new Error('Microphone access requires a secure context (HTTPS). Please access via HTTPS or localhost.')
     }
-    
+
     // Check permissions API if available
     if (navigator.permissions && navigator.permissions.query) {
       try {
         const permissionStatus = await navigator.permissions.query({ name: 'microphone' })
         console.log('Microphone permission status:', permissionStatus.state)
-        
+
         if (permissionStatus.state === 'denied') {
           throw new Error('Microphone access is denied. Please allow microphone access in your browser settings (click the lock icon in the address bar).')
         }
@@ -744,20 +746,20 @@ async function doStartRecording() {
         console.log('Permissions API not available, continuing...', permError)
       }
     }
-    
+
     // Check if getUserMedia is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       // Try legacy API as fallback
       const getUserMedia = navigator.mediaDevices?.getUserMedia ||
-                          navigator.getUserMedia ||
-                          navigator.webkitGetUserMedia ||
-                          navigator.mozGetUserMedia ||
-                          navigator.msGetUserMedia
-      
+        navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia ||
+        navigator.msGetUserMedia
+
       if (!getUserMedia) {
         throw new Error('Microphone access is not available. Please use HTTPS or localhost, and ensure your browser supports microphone access.')
       }
-      
+
       // Use legacy API with Promise wrapper
       stream = await new Promise((resolve, reject) => {
         getUserMedia.call(navigator, { audio: true }, resolve, reject)
@@ -766,7 +768,7 @@ async function doStartRecording() {
       console.log('Requesting microphone access...')
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       console.log('Microphone access granted, stream:', stream)
-      
+
       // Verify we actually got audio tracks
       const audioTracks = stream.getAudioTracks()
       if (audioTracks.length === 0) {
@@ -774,20 +776,20 @@ async function doStartRecording() {
       }
       console.log('Audio tracks:', audioTracks.length, audioTracks[0].label)
     }
-    
+
     rec = true
     buffers = []
     lastSpeechTS = performance.now()
     ctx = new AudioContext()
     src = ctx.createMediaStreamSource(stream)
     proc = ctx.createScriptProcessor(4096, 1, 1)
-    
+
     proc.onaudioprocess = e => {
       if (!rec) return
-      
+
       const ch = e.inputBuffer.getChannelData(0)
       buffers.push(new Float32Array(ch))
-      
+
       // Simple energy-based VAD per frame
       if (rms(ch) >= VAD_RMS) {
         lastSpeechTS = performance.now()
@@ -800,10 +802,10 @@ async function doStartRecording() {
         }, 0)
       }
     }
-    
+
     src.connect(proc)
     proc.connect(ctx.destination)
-    
+
     micButton.classList.add('recording')
     micButton.innerHTML = '🔴'
     micButton.title = 'Recording... (auto-stops after silence)'
@@ -820,10 +822,10 @@ async function doStartRecording() {
       protocol: window.location.protocol,
       hostname: window.location.hostname
     })
-    
+
     let errorMessage = 'Failed to access microphone. '
     let helpMessage = ''
-    
+
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
       errorMessage += 'Microphone access was denied. '
       helpMessage = 'Click the lock icon (🔒) in your browser\'s address bar and allow microphone access. On Windows Chrome with self-signed certificates, you may need to click "Advanced" and "Proceed to site" first.'
@@ -843,7 +845,7 @@ async function doStartRecording() {
       errorMessage += `Error: ${error.message || 'Unknown error'}. `
       helpMessage = 'Check the browser console (F12) for more details. On Windows Chrome with self-signed certificates, try clicking the lock icon and allowing permissions.'
     }
-    
+
     addMessage(errorMessage + helpMessage, false)
     rec = false
     micButton.classList.remove('recording')
@@ -855,43 +857,43 @@ async function doStartRecording() {
 
 async function doStopRecording() {
   if (!rec) return
-  
+
   rec = false
   micButton.classList.remove('recording')
   micButton.innerHTML = '🎤'
   micButton.title = 'Start voice input'
   micButton.disabled = true
   messageInput.disabled = false
-  
+
   try {
     proc.disconnect()
-  } catch {}
+  } catch { }
   try {
     src.disconnect()
-  } catch {}
+  } catch { }
   try {
     stream.getTracks().forEach(t => t.stop())
-  } catch {}
+  } catch { }
   try {
     await ctx.close()
-  } catch {}
-  
+  } catch { }
+
   // Process audio
   let total = 0
   for (const b of buffers) total += b.length
-  
+
   const mono = new Float32Array(total)
   let off = 0
   for (const b of buffers) {
     mono.set(b, off)
     off += b.length
   }
-  
+
   // Resample and quick gating
   const pcm = resample(mono, ctx.sampleRate)
   const duration = pcm.length / 16000
   const energy = rms(pcm)
-  
+
   // Skip blank/short/low-energy segments
   if (duration < MIN_SEG_SECONDS || energy < MIN_RMS) {
     addMessage('(No speech detected, try again)', false)
@@ -899,13 +901,13 @@ async function doStopRecording() {
     submitButton.disabled = false
     return
   }
-  
+
   // Run Whisper
   try {
     addMessage('(Processing speech...)', false)
     const result = await asr(pcm)
     const text = (result.text || "").trim()
-    
+
     if (text) {
       // Put transcribed text in input field
       messageInput.value = text
@@ -924,7 +926,7 @@ async function doStopRecording() {
     console.error('STT error:', error)
     addMessage('(Speech recognition error, please try again)', false)
   }
-  
+
   micButton.disabled = false
   submitButton.disabled = false
 }
@@ -969,4 +971,4 @@ initializeConnection().then(() => {
   // Still try to initialize STT even if connection fails
   initializeSTT()
 })
- 
+

@@ -1,1 +1,9 @@
-.venv/
+node_modules
+**/node_modules
+.venv
+**/.venv
+home-page
+__pycache__
+**/__pycache__
+.git
+*.txt

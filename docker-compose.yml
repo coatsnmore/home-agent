@@ -98,7 +98,7 @@ services:
     #   context: ../hubitat-mcp
     #   dockerfile: Dockerfile
     # image: hubitat-mcp-docker:0.0.1
-    image: coatsnmore/hubitat-mcp:0.0.1
+    image: coatsnmore/hubitat-mcp:0.0.3
     container_name: hubitat-mcp
     env_file:
       - .env
@@ -106,15 +106,13 @@ services:
       - ollama-network
     ports:
       - "8888:8888"
-    tty: true
-    stdin_open: true
     environment:
       - HOST=${HUB_HOST}
       - ACCESS_TOKEN=${HUB_ACCESS_TOKEN}
       - MCP_PORT=8888
       - FAST_MCP_LOG_LEVEL=ERROR
       - LOG_LEVEL=ERROR
-    command: ["--http"]
+    command: ["--http-only"]
     restart: unless-stopped
   home-page:
     build:

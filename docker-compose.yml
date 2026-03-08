@@ -94,28 +94,27 @@ services:
     command: /app/docker/hubitat-agent.sh
     restart: unless-stopped
   hubitat-mcp:
-    build:
-      context: ../hubitat-mcp
-      dockerfile: Dockerfile
-    image: hubitat-mcp-docker:0.0.1
+    # build:
+    #   context: ../hubitat-mcp
+    #   dockerfile: Dockerfile
+    # image: hubitat-mcp-docker:0.0.1
+    image: coatsnmore/hubitat-mcp:0.0.1
     container_name: hubitat-mcp
     env_file:
       - .env
     networks:
       - ollama-network
-    volumes:
-      - ../hubitat-mcp:/app
-      - /app/.venv
-    entrypoint: []
     ports:
       - "8888:8888"
+    tty: true
+    stdin_open: true
     environment:
       - HOST=${HUB_HOST}
       - ACCESS_TOKEN=${HUB_ACCESS_TOKEN}
+      - MCP_PORT=8888
       - FAST_MCP_LOG_LEVEL=ERROR
       - LOG_LEVEL=ERROR
-      - MCP_PORT=8888
-    command: sh -c "uv sync && uvx watchfiles 'uv run hubitat-mcp --http-only' src"
+    command: ["--http"]
     restart: unless-stopped
   home-page:
     build:

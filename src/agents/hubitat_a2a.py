@@ -1,7 +1,7 @@
 from strands import Agent
 from strands_tools.mcp_client import MCPClient
 from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from mcp import StdioServerParameters
 from strands.multiagent.a2a import A2AServer
 from .llm_provider import get_model
@@ -14,14 +14,14 @@ import os
 load_dotenv()
 
 # Use Docker service name when running in Docker, localhost otherwise
-mcp_host = os.getenv("MCP_SERVER_HOST", "localhost")
+mcp_host = os.getenv("MCP_SERVER_HOST", "hubitat-mcp")
 
 hubitat_token = os.getenv("HUB_ACCESS_TOKEN", "")
 hubitat_host = os.getenv("HUB_HOST", "")
-
+    
 # Hubitat MCP (Docker)
-mcp_url = f"http://{mcp_host}:8888/sse"
-hubitat_mcp_client = MCPClient(lambda: sse_client(mcp_url))
+mcp_url = f"http://{mcp_host}:8888/mcp"
+hubitat_mcp_client = MCPClient(lambda: streamablehttp_client(mcp_url)) 
 
 # Sequential Thinking MCP (npx)
 seq_think_params = StdioServerParameters(

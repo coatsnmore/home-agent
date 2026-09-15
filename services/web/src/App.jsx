@@ -10,10 +10,21 @@ import { useTTS } from './hooks/useTTS'
 
 export default function App() {
   const [inputText, setInputText] = useState('')
-  const [isTtsEnabled, setIsTtsEnabled] = useState(true)
+  const [isTtsEnabled, setIsTtsEnabled] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
 
-  const { speak, cancel: cancelTts } = useTTS()
+  const { isSpeaking, speak, cancel: cancelTts } = useTTS()
+
+  // Instant mute button toggle
+  const handleToggleTts = useCallback(() => {
+    setIsTtsEnabled((prev) => {
+      const next = !prev
+      if (!next) {
+        cancelTts()
+      }
+      return next
+    })
+  }, [cancelTts])
 
   // On assistant response callback to speak text
   const handleAssistantResponse = useCallback((text) => {
@@ -51,6 +62,7 @@ export default function App() {
     toggleListening,
   } = useSTT({
     onTranscriptReady: handleTranscriptReady,
+    isAssistantBusy: isStreaming || isSpeaking,
   })
 
   // Live mirror speech transcript into input bar
@@ -102,7 +114,7 @@ export default function App() {
       <Header 
         isOnline={isOnline}
         isTtsEnabled={isTtsEnabled}
-        onToggleTts={() => setIsTtsEnabled(prev => !prev)}
+        onToggleTts={handleToggleTts}
         micState={micState}
         onToggleMic={toggleListening}
       />

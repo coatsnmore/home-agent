@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Bot, User, Wrench, Loader2 } from 'lucide-react'
 import { DeviceCard } from './DeviceCard'
 
@@ -29,9 +31,27 @@ export function ChatStream({ messages, isStreaming, currentTool, onControlDevice
                 </div>
               )}
 
-              {/* Message text */}
-              <div style={{ whiteSpace: 'pre-wrap' }}>
-                {msg.content || (isStreaming && !isUser ? 'Thinking...' : '')}
+              {/* Render Rich Markdown for assistant and user */}
+              <div className="markdown-body">
+                {msg.content ? (
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      table: ({ node, ...props }) => (
+                        <div className="table-wrapper">
+                          <table {...props} />
+                        </div>
+                      ),
+                      a: ({ node, ...props }) => (
+                        <a target="_blank" rel="noopener noreferrer" {...props} />
+                      ),
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
+                ) : isStreaming && !isUser ? (
+                  <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>Thinking...</span>
+                ) : null}
               </div>
 
               {/* Inline A2UI device cards if present */}

@@ -10,7 +10,6 @@ async function getWhisperPipeline() {
       const { pipeline, env } = await import('@xenova/transformers')
       env.allowLocalModels = false
       env.useBrowserCache = true
-      // Load whisper model
       const p = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en')
       whisperInstance = p
       return p
@@ -36,7 +35,6 @@ async function resampleBlobTo16kHz(blob) {
     return decoded.getChannelData(0)
   }
 
-  // Use OfflineAudioContext for clean, hardware-accelerated 16kHz polyphase resampling
   const targetLength = Math.max(1, Math.ceil(decoded.duration * 16000))
   const offlineCtx = new OfflineAudioContext(1, targetLength, 16000)
   const source = offlineCtx.createBufferSource()
@@ -48,16 +46,18 @@ async function resampleBlobTo16kHz(blob) {
 }
 
 /**
- * Offline & Mac-optimized Speech-to-Text hook with real-time VAD volume metering,
- * native Web Speech streaming preview, and 16kHz resampled local Whisper.
+ * Continuous conversational Speech-to-Text hook with real-time VAD volume metering,
+ * native Web Speech streaming preview, 16kHz local Whisper, and hands-free turn-taking.
  */
-export function useSTT({ onTranscriptReady } = {}) {
-  // 'idle' | 'requesting' | 'listening' | 'transcribing' | 'denied' | 'error'
+export function useSTT({ onTranscriptReady, isAssistantBusy = false } = {}) {
+  // 'idle' | 'requesting' | 'listening' | 'transcribing' | 'paused' | 'denied' | 'error'
   const [micState, setMicState] = useState('idle')
   const [transcript, setTranscript] = useState('')
   const [volumeLevel, setVolumeLevel] = useState(0) // 0 to 1
   const [errorMessage, setErrorMessage] = useState(null)
 
+  const isContinuousRef = useRef(false)
+  const isAssistantBusyRef = useRef(isAssistantBusy)
   const mediaStreamRef = useRef(null)
   const audioContextRef = useRef(null)
   const analyserRef = useRef(null)
@@ -76,16 +76,13 @@ export function useSTT({ onTranscriptReady } = {}) {
     })
   }, [])
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopListening()
-    }
-  }, [])
-
-  // Audio analysis loop for VAD & live volume meter
+  // Audio analysis loop for live volume meter & silence detection
   const setupAudioMeter = (stream) => {
     try {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        return
+      }
+
       const AudioCtx = window.AudioContext || window.webkitAudioContext
       if (!AudioCtx) return
 
@@ -109,11 +106,10 @@ export function useSTT({ onTranscriptReady } = {}) {
           sum += dataArray[i]
         }
         const avg = sum / dataArray.length
-        // Normalized 0 to 1 with noise gate
         const normalized = Math.max(0, Math.min(1, (avg - 10) / 50))
         setVolumeLevel(normalized)
 
-        // VAD: voice detection and silence auto-stop
+        // VAD: voice detection and auto-stop after speech finishes
         if (normalized > 0.16) {
           hasSpokenRef.current = true
           if (silenceTimerRef.current) {
@@ -122,11 +118,11 @@ export function useSTT({ onTranscriptReady } = {}) {
           }
         } else if (hasSpokenRef.current && !silenceTimerRef.current) {
           silenceTimerRef.current = setTimeout(() => {
-            // Auto stop after 2.2s of silence following speech
+            // Auto stop after 2.0s of silence following speech
             if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
               mediaRecorderRef.current.stop()
             }
-          }, 2200)
+          }, 2000)
         }
 
         animFrameRef.current = requestAnimationFrame(updateMeter)
@@ -138,7 +134,7 @@ export function useSTT({ onTranscriptReady } = {}) {
     }
   }
 
-  const stopAudioMeter = () => {
+  const stopAudioMeterOnly = () => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current)
       animFrameRef.current = null
@@ -146,6 +142,18 @@ export function useSTT({ onTranscriptReady } = {}) {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = null
+    }
+    setVolumeLevel(0)
+  }
+
+  const tearDownAll = () => {
+    stopAudioMeterOnly()
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop() } catch {}
+      recognitionRef.current = null
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try { mediaRecorderRef.current.stop() } catch {}
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop())
@@ -155,49 +163,26 @@ export function useSTT({ onTranscriptReady } = {}) {
       audioContextRef.current.close().catch(() => {})
       audioContextRef.current = null
     }
-    setVolumeLevel(0)
   }
 
-  const startListening = useCallback(async () => {
-    setErrorMessage(null)
+  // Starts a recording turn using the existing (or new) media stream
+  const startRecordingTurn = useCallback(() => {
+    if (!mediaStreamRef.current) return
+
     setTranscript('')
     currentTranscriptRef.current = ''
     hasSpokenRef.current = false
-    setMicState('requesting')
-
-    // 1. Request microphone permission and access
-    let stream = null
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      })
-      mediaStreamRef.current = stream
-      setupAudioMeter(stream)
-    } catch (err) {
-      console.error('Microphone access failed:', err)
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMicState('denied')
-        setErrorMessage('Microphone blocked. Click the lock/tune icon in your address bar to allow.')
-      } else {
-        setMicState('error')
-        setErrorMessage(`Microphone error: ${err.message}`)
-      }
-      return
-    }
-
+    audioChunksRef.current = []
+    setupAudioMeter(mediaStreamRef.current)
     setMicState('listening')
 
-    // 2. Setup MediaRecorder for universal capture
-    audioChunksRef.current = []
     let recorder = null
     try {
       const mimeTypes = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus']
       const supportedMime = mimeTypes.find((t) => MediaRecorder.isTypeSupported(t)) || ''
-      recorder = supportedMime ? new MediaRecorder(stream, { mimeType: supportedMime }) : new MediaRecorder(stream)
+      recorder = supportedMime 
+        ? new MediaRecorder(mediaStreamRef.current, { mimeType: supportedMime }) 
+        : new MediaRecorder(mediaStreamRef.current)
 
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -206,19 +191,28 @@ export function useSTT({ onTranscriptReady } = {}) {
       }
 
       recorder.onstop = async () => {
-        stopAudioMeter()
+        stopAudioMeterOnly()
 
-        // Check if WebSpeech API already produced a valid transcript
+        // 1. Check if WebSpeech API already produced a valid transcript
         const existingText = currentTranscriptRef.current.trim()
         if (existingText && existingText.length > 1) {
-          setMicState('idle')
           if (onTranscriptReady) onTranscriptReady(existingText)
+          if (isContinuousRef.current) {
+            setMicState('paused')
+          } else {
+            setMicState('idle')
+          }
           return
         }
 
-        // Run local Whisper STT with proper 16kHz resampling
+        // 2. Transcribe recorded audio with 16kHz local Whisper
         if (audioChunksRef.current.length === 0) {
-          setMicState('idle')
+          if (isContinuousRef.current) {
+            // Re-arm immediately if continuous
+            startRecordingTurn()
+          } else {
+            setMicState('idle')
+          }
           return
         }
 
@@ -226,21 +220,21 @@ export function useSTT({ onTranscriptReady } = {}) {
         try {
           const mime = recorder?.mimeType || 'audio/webm'
           const audioBlob = new Blob(audioChunksRef.current, { type: mime })
-
-          // Resample to 16kHz mono Float32Array
           const audioData = await resampleBlobTo16kHz(audioBlob)
 
-          // Measure RMS loudness to prevent silence hallucinations
           let sumSquares = 0
           for (let i = 0; i < audioData.length; i++) {
             sumSquares += audioData[i] * audioData[i]
           }
           const rms = Math.sqrt(sumSquares / Math.max(1, audioData.length))
 
-          // If barely audible sound and no speech detected by VAD, don't hallucinate
+          // Filter out silence
           if (rms < 0.007 && !hasSpokenRef.current) {
-            console.log('Audio level below voice threshold, ignoring silence')
-            setMicState('idle')
+            if (isContinuousRef.current) {
+              startRecordingTurn()
+            } else {
+              setMicState('idle')
+            }
             return
           }
 
@@ -255,22 +249,39 @@ export function useSTT({ onTranscriptReady } = {}) {
             const clean = text.replace(/^[.\s,!?]+|[.\s,!?]+$/g, '').toLowerCase()
             const hallucinations = ['you', 'thank you', 'thanks', 'bye', 'so', 'watching', 'subtitles', 'thank you for watching', 'thanks for watching']
             
-            // Discard known Whisper hallucinations when energy was low
             if (hallucinations.includes(clean) && rms < 0.02) {
-              console.log('Discarded silence hallucination:', text)
-              setMicState('idle')
+              if (isContinuousRef.current) {
+                startRecordingTurn()
+              } else {
+                setMicState('idle')
+              }
               return
             }
 
             setTranscript(text)
             currentTranscriptRef.current = text
             if (onTranscriptReady) onTranscriptReady(text)
+            
+            if (isContinuousRef.current) {
+              setMicState('paused')
+            } else {
+              setMicState('idle')
+            }
+          } else {
+            if (isContinuousRef.current) {
+              startRecordingTurn()
+            } else {
+              setMicState('idle')
+            }
           }
         } catch (whisperErr) {
           console.error('Local Whisper transcription error:', whisperErr)
-          setErrorMessage('Speech processing failed. Please type your message.')
-        } finally {
-          setMicState('idle')
+          if (isContinuousRef.current) {
+            startRecordingTurn()
+          } else {
+            setErrorMessage('Speech processing failed.')
+            setMicState('idle')
+          }
         }
       }
 
@@ -280,7 +291,7 @@ export function useSTT({ onTranscriptReady } = {}) {
       console.warn('MediaRecorder error:', mediaErr)
     }
 
-    // 3. Start native Web Speech in parallel for real-time streaming preview
+    // Start native Web Speech in parallel for streaming preview
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (SpeechRecognition) {
       try {
@@ -303,7 +314,7 @@ export function useSTT({ onTranscriptReady } = {}) {
         }
 
         recognition.onerror = (err) => {
-          console.warn('SpeechRecognition notice (using Whisper fallback):', err.error)
+          console.warn('SpeechRecognition notice:', err.error)
         }
 
         recognition.onend = () => {
@@ -319,35 +330,77 @@ export function useSTT({ onTranscriptReady } = {}) {
     }
   }, [onTranscriptReady])
 
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop()
-      } catch {}
-      recognitionRef.current = null
-    }
+  // Initializes media stream and enters continuous conversation mode
+  const startListening = useCallback(async () => {
+    setErrorMessage(null)
+    isContinuousRef.current = true
+    setMicState('requesting')
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop()
-      } catch {}
-    } else {
-      stopAudioMeter()
-      setMicState('idle')
+    let stream = null
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+      mediaStreamRef.current = stream
+      startRecordingTurn()
+    } catch (err) {
+      console.error('Microphone access failed:', err)
+      isContinuousRef.current = false
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setMicState('denied')
+        setErrorMessage('Microphone blocked. Click the lock/tune icon in your address bar to allow.')
+      } else {
+        setMicState('error')
+        setErrorMessage(`Microphone error: ${err.message}`)
+      }
     }
+  }, [startRecordingTurn])
+
+  // Explicit user stop (disables continuous mode and shuts off mic)
+  const stopListening = useCallback(() => {
+    isContinuousRef.current = false
+    tearDownAll()
+    setMicState('idle')
+    setTranscript('')
   }, [])
 
   const toggleListening = useCallback(() => {
-    if (micState === 'listening' || micState === 'requesting') {
+    if (isContinuousRef.current || micState === 'listening' || micState === 'paused' || micState === 'requesting' || micState === 'transcribing') {
       stopListening()
     } else {
       startListening()
     }
   }, [micState, startListening, stopListening])
 
+  // Reactive turn-taking: when assistant finishes responding, resume listening automatically!
+  useEffect(() => {
+    isAssistantBusyRef.current = isAssistantBusy
+
+    if (!isAssistantBusy && isContinuousRef.current && micState === 'paused') {
+      // Small 400ms pause to let room audio clear before re-arming mic
+      const timer = setTimeout(() => {
+        if (isContinuousRef.current && !isAssistantBusyRef.current && micState === 'paused') {
+          startRecordingTurn()
+        }
+      }, 400)
+      return () => clearTimeout(timer)
+    }
+  }, [isAssistantBusy, micState, startRecordingTurn])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      tearDownAll()
+    }
+  }, [])
+
   return {
     micState,
-    isListening: micState === 'listening' || micState === 'requesting',
+    isListening: micState === 'listening' || micState === 'requesting' || micState === 'paused' || micState === 'transcribing',
     transcript,
     volumeLevel,
     errorMessage,

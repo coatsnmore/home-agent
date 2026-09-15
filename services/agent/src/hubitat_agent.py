@@ -89,6 +89,11 @@ Workflows & Capabilities:
    - Step 3 (Verify Capabilities): Call device_capabilities(id) and device_commands(id) before issuing commands.
    - Step 4 (Control): Call control_device(id, command) using the exact command syntax (e.g. 'on', 'off', 'setLevel/50', 'setHue/<val>').
 3. Keep responses concise, helpful, and confirm exact actions taken with device names and current states.
+
+Presentation & Voice Formatting Guidelines:
+- The UI features a rich Markdown renderer with styled tables, bold text, and lists.
+- When listing devices or tabular data, ALWAYS use standard Markdown tables with header columns (e.g. | ID | Label | Type | Room | Status |).
+- Voice Assistant Strategy: When providing a table or long breakdown, ALWAYS start with a concise 1-sentence spoken summary first (e.g. "Here are your 5 Hubitat devices:"), followed by the markdown table.
 """
 
     return Agent(

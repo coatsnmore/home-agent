@@ -39,6 +39,11 @@ export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggle
               <span className="status-indicator-dot" style={{ backgroundColor: 'var(--accent-red)', boxShadow: '0 0 8px var(--accent-red)' }} />
               <span style={{ color: 'var(--accent-red)', fontWeight: 600 }}>Mic: Listening...</span>
             </>
+          ) : micState === 'paused' ? (
+            <>
+              <span className="status-indicator-dot online" />
+              <span style={{ color: 'var(--primary)' }}>Mic: Answering...</span>
+            </>
           ) : micState === 'transcribing' ? (
             <>
               <span className="status-indicator-dot" style={{ backgroundColor: 'var(--accent-cyan)', boxShadow: '0 0 8px var(--accent-cyan)' }} />

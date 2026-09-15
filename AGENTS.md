@@ -1,67 +1,90 @@
 # Agent Architecture Documentation
 
-This document describes the AI agent constructs in the home automation system.
+This document describes the modern architecture of the Home Agent system.
 
 ## Overview
 
-The system consists of multiple AI agents and specialized MCP servers that provide smart home automation, reasoning, and memory capabilities.
+The system is built on **Strands Agents (v1.55.1+)**, **AG-UI (Agent-User Interaction Protocol)**, **A2UI (Generative UI)**, and **LiteLLM**.
 
-### Communication Protocols
-- **A2A (Agent-to-Agent)**: For inter-agent communication and coordinated planning.
-- **MCP (Model Context Protocol)**: For exposing specific tools (Hubitat, Reasoning, Memory) to agents.
-
-## Architecture Diagram
+It connects a browser-first interactive React dashboard directly to a specialized Hubitat smart home agent using real-time SSE streaming. Model routing is decoupled through a containerized LiteLLM gateway defaulting to local Ollama.
 
 ```mermaid
 graph TD
-    User((User)) -->|HTTPS| Nginx[Nginx SSL Proxy]
-    Nginx -->|/ | Frontend[Home Page UI]
-    Nginx -->|/agent| HubitatAgent[Hubitat Agent]
-    
-    subgraph "Smarter Hubitat Brain"
-        HubitatAgent -->|SSE| HubitatMCP[Hubitat MCP Server]
-        HubitatAgent -->|stdio| SeqThink[Sequential Thinking MCP]
-        HubitatAgent -->|stdio| Memory[Memory MCP]
+    User((User)) -->|HTTPS / 443| Nginx[Nginx SSL Proxy]
+    Nginx -->|/ | WebUI["Web Dashboard (React + A2UI)"]
+    Nginx -->|/agent| HubitatAgent["Hubitat Agent (Strands + AG-UI)"]
+    Nginx -->|/mcp| HubitatMCP["Hubitat MCP Server"]
+
+    subgraph "Client-Side Speech (Offline)"
+        WebUI --> LocalWhisper["Transformers.js (Whisper STT)"]
+        WebUI --> SpeechSynth["Web Speech Synthesis (TTS)"]
     end
-    
-    HubitatMCP -->|HTTP API| HubitatHub[Hubitat Hub]
-    HubitatAgent -->|HTTP| Ollama[Ollama Local LLM]
+
+    subgraph "Hubitat Agent Service (:9002)"
+        HubitatAgent --> SkillsPlugin["AgentSkills Plugin (controlling-hubitat)"]
+        HubitatAgent --> MCPClient["Strands MCPClient"]
+    end
+
+    MCPClient -->|Streamable HTTP / 8888| HubitatMCP
+    HubitatMCP -->|Maker API| HubitatHub["Hubitat Elevation Hub"]
+
+    subgraph "Model Gateway (:4000)"
+        HubitatAgent -->|OpenAI API| LiteLLM["LiteLLM Container Proxy"]
+        LiteLLM -->|Default| OllamaLocal["Local Ollama (gpt-oss:20b)"]
+        LiteLLM -.->|Optional Fallback| CloudModels["OpenRouter / OpenAI"]
+    end
 ```
 
-## Specialized Agents
-
-### Hubitat Agent (`src/agents/hubitat_a2a.py`)
-
-**Type**: Specialized A2A Server Agent
-
-**Purpose**: Acts as the primary interface for smart home control, planning, and long-term memory.
-
-**Key Features**:
-- **Multi-MCP Aggregation**: Combines tools from three sources into a single "smarter" brain.
-- **Device Control**: Comprehensive management of Hubitat devices via [hubitat-mcp](https://github.com/coatsnmore/hubitat-mcp).
-- **Advanced Reasoning**: Uses the Sequential Thinking MCP for complex multi-step automation.
-- **Persistent State**: Leverages the Memory MCP to recall user habits and preferences.
-
-**Tools Implemented**:
-*   `list_devices`, `device_details`, `control_device` (Hubitat)
-*   `sequential_thinking` (Reasoning)
-*   `memory` / `knowledge_graph` (Persistence)
-
-**Network Configuration**:
-- **Internal Port**: `9002`
-- **External Path**: `/agent` (via Nginx)
-- **A2A URL**: `https://${HOST_URL}/agent`
-
 ---
 
-### Home Agent (`src/agents/home_a2a.py`)
+## Key Architectural Components
 
-**Type**: Coordinator Agent
+### 1. Hubitat Agent (`services/agent/src/hubitat_agent.py`)
+* **Framework**: Strands Agents SDK `v1.55.1`.
+* **Protocol**: **AG-UI Protocol** (`ag-ui-strands`, `ag-ui-protocol`) over Server-Sent Events (SSE). Replaces A2A for client-to-agent communication.
+* **Skills Integration**: Dynamically loads `skills/controlling-hubitat` using the native `AgentSkills` plugin. The agent follows the mandatory 4-step pre-flight sequence (`list_devices` -> `device_details` -> `device_capabilities` -> `control_device`).
+* **Tool Access**: Integrates directly with the Hubitat MCP server for Maker API execution without hardcoded device IDs.
+* **Clean System Prompt**: Stripped of obsolete references to removed Sequential Thinking and Memory MCPs.
 
-**Purpose**: acts as a central discovery hub for various specialized agents (Lighting, Security, HVAC) and delegates tasks accordingly.
+### 2. Model Routing via LiteLLM (`docker/litellm_config.yaml`)
+* Runs as a lightweight container (`ghcr.io/berriai/litellm:main-latest`) on port `4000`.
+* Default model mapped to `ollama/gpt-oss:20b` running on the host machine (`http://host.docker.internal:11434`).
+* Allows swapping or adding cloud models (OpenRouter, OpenAI, Claude) without modifying any agent code.
 
-**Configuration**:
-- **Internal Port**: `9001`
-- **Known Connections**: Delegates to Hubitat Agent at `http://hubitat-agent:9002`.
+### 3. Web Dashboard (`services/web`)
+* **Framework**: React 19 + Vite.
+* **Theme**: Modern dark mode with responsive grid, glassmorphic cards, and glowing telemetry indicators.
+* **AG-UI Client**: Streams agent reasoning deltas, tool execution badges, and device state updates.
+* **A2UI Interactive Cards**: Interactive device widgets (on/off toggles, brightness sliders, sensor badges) that allow direct user control or automated agent control.
+* **Offline Speech-to-Text (STT)**: In-browser Whisper transcription with energy-based Voice Activity Detection (VAD).
+* **Offline Text-to-Speech (TTS)**: Browser-native `SpeechSynthesis` with English voice prioritization and barge-in cancellation.
 
----
+### 4. Repository Structure
+
+```text
+home-agent/
+├── docker/
+│   ├── docker-compose.yml        # Unified service orchestrator
+│   ├── litellm_config.yaml       # LiteLLM routing matrix
+│   ├── agent.Dockerfile          # Fast Python/uv container for Agent
+│   ├── web.Dockerfile            # Node container for React frontend
+│   └── nginx/                    # SSL reverse proxy
+├── services/
+│   ├── agent/                    # Hubitat Strands Agent (FastAPI + AG-UI)
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       ├── main.py           # AG-UI FastAPI server entrypoint
+│   │       └── hubitat_agent.py  # Agent and skills definition
+│   └── web/                      # React 19 Web Dashboard
+│       ├── package.json
+│       ├── vite.config.js
+│       └── src/
+│           ├── components/       # DeviceCard, ChatStream, VoiceHUD, Header
+│           ├── hooks/            # useAguiChat, useSTT, useTTS
+│           └── styles/           # Design tokens and glassmorphism styling
+├── skills/
+│   └── controlling-hubitat/      # SKILL.md rules for Hubitat Elevation
+├── AGENTS.md                     # Architecture documentation
+├── pyproject.toml                # Root dependencies
+└── .env.example                  # Environment configuration template
+```

@@ -1,5 +1,5 @@
 [project]
-name = "home_agent"
+name = "hubitat-agent"
 version = "0.2.0"
 description = "Hubitat Smart Home Agent with Strands, AG-UI, A2UI, and LiteLLM"
 requires-python = ">=3.12"
@@ -20,11 +20,11 @@ dependencies = [
 ]
 
 [project.scripts]
-hubitat-agent = "services.agent.src.main:main"
+hubitat-agent = "src.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["services/agent/src"]
+packages = ["src"]

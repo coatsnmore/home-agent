@@ -23,25 +23,6 @@ hubitat_host = os.getenv("HUB_HOST", "")
 mcp_url = f"http://{mcp_host}:8888/mcp"
 hubitat_mcp_client = MCPClient(lambda: streamablehttp_client(mcp_url)) 
 
-# Sequential Thinking MCP (npx)
-seq_think_params = StdioServerParameters(
-    command="npx",
-    args=[
-        "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-    ]
-)
-seq_think_client = MCPClient(lambda: stdio_client(seq_think_params))
-
-# Memory MCP (npx)
-memory_params = StdioServerParameters(
-    command="npx",
-    args=[
-        "-y",
-        "@modelcontextprotocol/server-memory"
-    ]
-)
-memory_client = MCPClient(lambda: stdio_client(memory_params))
 
 model = get_model(provider="ollama")
 
@@ -49,14 +30,10 @@ def main():
     """Main entry point for the hubitat agent."""
     # Enter MCP client contexts
     hubitat_mcp_client.__enter__()
-    seq_think_client.__enter__()
-    memory_client.__enter__()
     
     try:
         # Get the tools from the MCP servers
         tools = hubitat_mcp_client.list_tools_sync()
-        tools.extend(seq_think_client.list_tools_sync())
-        tools.extend(memory_client.list_tools_sync())
 
         agent = Agent(
             name="Hubitat Agent",
@@ -112,9 +89,6 @@ def main():
     finally:
         # Clean up MCP clients when server stops
         hubitat_mcp_client.__exit__(None, None, None)
-        seq_think_client.__exit__(None, None, None)
-        memory_client.__exit__(None, None, None)
-
 
 if __name__ == "__main__":
     main()

@@ -7,12 +7,14 @@ import { VoiceHUD } from './components/VoiceHUD'
 import { useAguiChat } from './hooks/useAguiChat'
 import { useSTT } from './hooks/useSTT'
 import { useTTS } from './hooks/useTTS'
+import { useLocation } from './hooks/useLocation'
 
 export default function App() {
   const [inputText, setInputText] = useState('')
   const [isTtsEnabled, setIsTtsEnabled] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
 
+  const { location: clientLocation } = useLocation()
   const { isSpeaking, speak, cancel: cancelTts } = useTTS()
 
   // Instant mute button toggle
@@ -44,6 +46,7 @@ export default function App() {
   } = useAguiChat({
     endpoint: '/agent',
     onAssistantResponse: handleAssistantResponse,
+    clientLocation,
   })
 
   // Speech to text hook
@@ -117,6 +120,7 @@ export default function App() {
         onToggleTts={handleToggleTts}
         micState={micState}
         onToggleMic={toggleListening}
+        location={clientLocation}
       />
 
       <main className="dashboard-grid">

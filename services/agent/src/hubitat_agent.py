@@ -52,12 +52,23 @@ def get_llm_model():
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
 
+from .weather_tool import get_outside_weather
+
+
 def create_hubitat_mcp_client() -> MCPClient:
     """Create MCP client for Hubitat Elevation Maker API."""
     mcp_host = os.getenv("MCP_SERVER_HOST", "hubitat-mcp")
     mcp_port = os.getenv("MCP_PORT", "8888")
     mcp_url = os.getenv("HUBITAT_MCP_URL", f"http://{mcp_host}:{mcp_port}/mcp")
     return MCPClient(url=mcp_url, continue_on_error=True)
+
+
+def create_duckduckgo_mcp_client() -> MCPClient:
+    """Create MCP client for DuckDuckGo Internet Search."""
+    ddg_host = os.getenv("DDG_MCP_HOST", "duckduckgo-mcp")
+    ddg_port = os.getenv("DDG_MCP_PORT", "7070")
+    ddg_url = os.getenv("DDG_MCP_URL", f"http://{ddg_host}:{ddg_port}/mcp")
+    return MCPClient(url=ddg_url, continue_on_error=True)
 
 
 def get_agent_plugins():
@@ -72,35 +83,49 @@ def get_agent_plugins():
     return plugins
 
 
-def create_hubitat_agent(mcp_client: Optional[MCPClient] = None) -> Agent:
-    """Create the Hubitat Strands Agent with AgentSkills and Maker API tools."""
-    client = mcp_client or create_hubitat_mcp_client()
+def create_hubitat_agent(
+    mcp_client: Optional[MCPClient] = None,
+    ddg_client: Optional[MCPClient] = None,
+) -> Agent:
+    """Create the Hubitat Strands Agent with Hubitat MCP, DuckDuckGo MCP, and Weather tools."""
+    hubitat = mcp_client or create_hubitat_mcp_client()
+    ddg = ddg_client or create_duckduckgo_mcp_client()
     plugins = get_agent_plugins()
     model = get_llm_model()
 
     system_prompt = """You are Hubitat Agent, a dedicated smart home AI controller for Hubitat Elevation.
-Your mission is to control, inspect, and automate home devices (lights, switches, dimmers, sensors, locks, and thermostats).
+Your mission is to control, inspect, and automate home devices, monitor indoor/outdoor environments, and answer web intelligence questions.
 
 Workflows & Capabilities:
-1. You have access to Hubitat Maker API tools (list_devices, device_details, device_capabilities, device_commands, device_history, control_device).
-2. You follow the 'controlling-hubitat' skill. Always execute the 4-step pre-flight rule:
-   - Step 1 (Discover): Call list_devices to find device labels and their exact integer IDs. Never guess an ID.
-   - Step 2 (Inspect Details): Call device_details(id) to check current state, level, temperature, or attributes.
-   - Step 3 (Verify Capabilities): Call device_capabilities(id) and device_commands(id) before issuing commands.
-   - Step 4 (Control): Call control_device(id, command) using the exact command syntax (e.g. 'on', 'off', 'setLevel/50', 'setHue/<val>').
-3. Keep responses concise, helpful, and confirm exact actions taken with device names and current states.
+1. Hubitat Smart Home Control:
+   - Access to Hubitat Maker API tools (list_devices, device_details, device_capabilities, device_commands, device_history, control_device).
+   - Follow the 'controlling-hubitat' skill. Always execute the 4-step pre-flight rule:
+     * Step 1 (Discover): Call list_devices to find device labels and exact integer IDs. Never guess an ID.
+     * Step 2 (Inspect Details): Call device_details(id) to check current state, level, temperature, or attributes.
+     * Step 3 (Verify Capabilities): Call device_capabilities(id) and device_commands(id) before issuing commands.
+     * Step 4 (Control): Call control_device(id, command) using the exact command syntax (e.g. 'on', 'off', 'setLevel/50', 'setHue/<val>').
+   - Keep responses concise, helpful, and confirm exact actions taken with device names and current states.
+
+2. Outdoor Weather:
+   - Access to the 'get_outside_weather' tool.
+   - When asked about the weather, temperature outside, rain, or forecast, call get_outside_weather().
+   - If no specific location is mentioned, omit the location argument to automatically infer the home client's location.
+
+3. Internet Search & Information:
+   - Access to DuckDuckGo search tools (search, fetch_content).
+   - When asked questions about general facts, news, guides, or external topics, use the search tool to retrieve fresh internet results.
 
 Presentation & Voice Formatting Guidelines:
 - The UI features a rich Markdown renderer with styled tables, bold text, and lists.
-- When listing devices or tabular data, ALWAYS use standard Markdown tables with header columns (e.g. | ID | Label | Type | Room | Status |).
-- Voice Assistant Strategy: When providing a table or long breakdown, ALWAYS start with a concise 1-sentence spoken summary first (e.g. "Here are your 5 Hubitat devices:"), followed by the markdown table.
+- When listing devices or tabular data, ALWAYS use standard Markdown tables with header columns (e.g. | Metric | Value | or | ID | Label | Type | Room | Status |).
+- Voice Assistant Strategy: When providing a table or long breakdown, ALWAYS start with a concise 1-sentence spoken summary first (e.g. "The current weather in Columbus is 81°F and mostly sunny:"), followed by the markdown table.
 """
 
     return Agent(
         name="Hubitat Agent",
-        description="Smart home control and monitoring agent for Hubitat Elevation devices.",
+        description="Smart home control, outdoor weather, and internet search agent.",
         system_prompt=system_prompt,
         model=model,
-        tools=[client],
+        tools=[hubitat, ddg, get_outside_weather],
         plugins=plugins,
     )

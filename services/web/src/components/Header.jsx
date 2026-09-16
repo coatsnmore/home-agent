@@ -1,7 +1,7 @@
 import React from 'react'
-import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic } from 'lucide-react'
+import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic, MapPin } from 'lucide-react'
 
-export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggleMic }) {
+export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggleMic, location }) {
   return (
     <header className="app-header">
       <div className="brand-section">
@@ -17,6 +17,13 @@ export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggle
       </div>
 
       <div className="header-status-group">
+        {location && (
+          <div className="status-pill" title={`Detected client location: ${location.displayName} (${location.latitude}, ${location.longitude})`}>
+            <MapPin size={14} color="var(--accent-cyan)" />
+            <span>{location.displayName}</span>
+          </div>
+        )}
+
         <div className="status-pill">
           <Cpu size={14} color="var(--primary)" />
           <span>LiteLLM: gpt-oss:20b</span>

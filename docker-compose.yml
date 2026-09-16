@@ -40,6 +40,7 @@ services:
       - .env
     depends_on:
       - hubitat-mcp
+      - duckduckgo-mcp
       - litellm
     networks:
       - ollama-network
@@ -48,6 +49,8 @@ services:
     environment:
       - MCP_SERVER_HOST=hubitat-mcp
       - MCP_PORT=8888
+      - DDG_MCP_HOST=duckduckgo-mcp
+      - DDG_MCP_PORT=7070
       - LITELLM_URL=http://litellm:4000/v1
       - LITELLM_API_KEY=sk-home-agent-litellm-key
       - LITELLM_MODEL=default-model
@@ -76,6 +79,19 @@ services:
       - FAST_MCP_LOG_LEVEL=ERROR
       - LOG_LEVEL=ERROR
     command: ["--http-only"]
+    restart: unless-stopped
+
+  # DuckDuckGo Internet Search MCP Server
+  duckduckgo-mcp:
+    build:
+      context: .
+      dockerfile: docker/duckduckgo.Dockerfile
+    image: duckduckgo-mcp:latest
+    container_name: duckduckgo-mcp
+    networks:
+      - ollama-network
+    ports:
+      - "7070:7070"
     restart: unless-stopped
 
   # Modern React + Vite Web Dashboard

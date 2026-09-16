@@ -3,12 +3,12 @@ import { useState, useRef, useCallback } from 'react'
 /**
  * AG-UI protocol client hook for streaming chat, tool execution tracking, and A2UI state sync.
  */
-export function useAguiChat({ endpoint = '/agent', onAssistantResponse } = {}) {
+export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLocation = null } = {}) {
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
       role: 'assistant',
-      content: "Hello! I'm your Hubitat Smart Home Agent. I can check temperatures, inspect lighting states, and control any of your connected devices. What would you like to do?",
+      content: "Hello! I'm your Hubitat Smart Home Agent. I can check temperatures, inspect lighting states, check outside weather, and search the web. What would you like to do?",
       toolCalls: [],
       a2uiSurfaces: [],
     }
@@ -85,15 +85,24 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse } = {}) {
         }))
 
       // Build AG-UI RunAgentInput payload compliant with ag-ui schema
+      const contextItems = []
+      if (clientLocation) {
+        contextItems.push({
+          description: 'Client Location',
+          value: `The web client's detected location is ${clientLocation.displayName || clientLocation.city} (Coordinates: ${clientLocation.latitude}, ${clientLocation.longitude}). Use this location when checking outdoor weather unless the user specifies otherwise.`,
+        })
+      }
+
       const runPayload = {
         threadId: threadIdRef.current,
         runId: `run-${Date.now()}`,
         messages: [...validHistory, userMessage],
         tools: [],
-        context: [],
+        context: contextItems,
         forwardedProps: {},
         state: {
           devices: devices,
+          location: clientLocation,
         }
       }
 

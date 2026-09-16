@@ -6,11 +6,12 @@ A sophisticated multi-agent system for home automation, featuring a smarter "bra
 
 This system utilizes the **Model Context Protocol (MCP)** and **Agent-to-Agent (A2A)** communication to provide a robust, extensible automation platform.
 
-### Smarter Hubitat Brain
-The Hubitat Agent has been enhanced with deep reasoning and persistence capabilities by integrating three distinct MCP servers:
-*   **Hubitat Control**: Direct device management via the [hubitat-mcp](https://github.com/coatsnmore/hubitat-mcp) repository.
-*   **Sequential Thinking**: Advanced multi-step reasoning for complex automation logic.
-*   **Memory / Knowledge Graph**: Persistence for user preferences and home state observations.
+### Smart Home, Weather & Internet Capabilities
+The Hubitat Agent provides integrated home automation and environmental intelligence:
+*   **Hubitat Control**: Direct device management via [hubitat-mcp](https://github.com/coatsnmore/hubitat-mcp) following the `controlling-hubitat` Agent Skill.
+*   **Outdoor Weather**: Real-time outdoor conditions, temperature, humidity, wind, and highs/lows automatically localized to the web client's detected coordinates.
+*   **DuckDuckGo Internet Search**: Dedicated `duckduckgo-mcp` service providing up-to-date web answers and live article lookups.
+*   **AG-UI & A2UI Streaming**: Server-Sent Events streaming real-time thinking deltas, tool badges, and interactive device cards.
 
 ## Prerequisites
 

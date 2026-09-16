@@ -8,41 +8,55 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ag_ui_strands import StrandsAgent, create_strands_app, add_strands_fastapi_endpoint
 
-from .hubitat_agent import create_hubitat_agent, create_hubitat_mcp_client, get_agent_plugins
+from .hubitat_agent import (
+    create_hubitat_agent,
+    create_hubitat_mcp_client,
+    create_duckduckgo_mcp_client,
+    get_agent_plugins,
+)
 
 load_dotenv()
 
 # Global instances
 mcp_client = None
+ddg_client = None
 hubitat_agent = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage lifecycle of MCP client connections."""
-    global mcp_client
+    global mcp_client, ddg_client
     print("Initializing Hubitat Agent service...")
     if mcp_client:
         try:
             mcp_client.__enter__()
             print("Connected to Hubitat MCP Server.")
         except Exception as e:
-            print(f"MCP Connection notice: {e}")
+            print(f"Hubitat MCP Connection notice: {e}")
+    if ddg_client:
+        try:
+            ddg_client.__enter__()
+            print("Connected to DuckDuckGo MCP Server.")
+        except Exception as e:
+            print(f"DuckDuckGo MCP Connection notice: {e}")
     yield
     print("Shutting down Hubitat Agent service...")
-    if mcp_client:
-        try:
-            mcp_client.__exit__(None, None, None)
-        except Exception:
-            pass
+    for client in (mcp_client, ddg_client):
+        if client:
+            try:
+                client.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def build_app() -> FastAPI:
     """Build the AG-UI FastAPI application."""
-    global mcp_client, hubitat_agent
+    global mcp_client, ddg_client, hubitat_agent
     
     mcp_client = create_hubitat_mcp_client()
-    hubitat_agent = create_hubitat_agent(mcp_client=mcp_client)
+    ddg_client = create_duckduckgo_mcp_client()
+    hubitat_agent = create_hubitat_agent(mcp_client=mcp_client, ddg_client=ddg_client)
     plugins = get_agent_plugins()
     
     # Wrap agent with AG-UI protocol adapter

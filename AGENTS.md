@@ -43,8 +43,11 @@ graph TD
 * **Framework**: Strands Agents SDK `v1.55.1`.
 * **Protocol**: **AG-UI Protocol** (`ag-ui-strands`, `ag-ui-protocol`) over Server-Sent Events (SSE). Replaces A2A for client-to-agent communication.
 * **Skills Integration**: Dynamically loads `skills/controlling-hubitat` using the native `AgentSkills` plugin. The agent follows the mandatory 4-step pre-flight sequence (`list_devices` -> `device_details` -> `device_capabilities` -> `control_device`).
-* **Tool Access**: Integrates directly with the Hubitat MCP server for Maker API execution without hardcoded device IDs.
-* **Clean System Prompt**: Stripped of obsolete references to removed Sequential Thinking and Memory MCPs.
+* **Tool Access**:
+  - **Hubitat Maker API**: Integrates directly with `hubitat-mcp` for device discovery and control without hardcoded IDs.
+  - **DuckDuckGo Web Search**: Containerized `duckduckgo-mcp` on port `7070` providing live web queries and article fetching.
+  - **Outdoor Weather Tool**: Built-in Open-Meteo tool (`weather_tool.py`) that returns current temperature, feels-like, highs/lows, humidity, and wind in Fahrenheit, inferring location from the web client's detected coordinates.
+* **Clean System Prompt**: Tailored for smart home automation, internet intelligence, and markdown table presentation with spoken summary headers for TTS.
 
 ### 2. Model Routing via LiteLLM (`docker/litellm_config.yaml`)
 * Runs as a lightweight container (`ghcr.io/berriai/litellm:main-latest`) on port `4000`.

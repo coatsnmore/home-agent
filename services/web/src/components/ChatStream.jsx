@@ -27,7 +27,7 @@ export function ChatStream({ messages, isStreaming, currentTool, onControlDevice
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <div className="tool-call-banner">
                   <Wrench size={13} />
-                  <span>Executed: {msg.toolCalls.map(t => t.name).join(', ')}</span>
+                  <span>Executed: {Array.from(new Set(msg.toolCalls.map(t => t.name).filter(Boolean))).join(', ')}</span>
                 </div>
               )}
 

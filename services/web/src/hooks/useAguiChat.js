@@ -1,5 +1,22 @@
 import { useState, useRef, useCallback } from 'react'
 
+function getToolName(item) {
+  if (!item) return ''
+  if (typeof item === 'string') {
+    return item.replace(/^[a-zA-Z0-9_-]+[:/]/, '')
+  }
+  const raw = (
+    item.tool_call_name ||
+    item.toolCallName ||
+    item.function?.name ||
+    item.tool_name ||
+    item.toolName ||
+    item.name ||
+    ''
+  )
+  return String(raw).replace(/^[a-zA-Z0-9_-]+[:/]/, '')
+}
+
 /**
  * AG-UI protocol client hook for streaming chat, tool execution tracking, and A2UI state sync.
  */
@@ -195,24 +212,51 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
               }
             }
 
-            // Extract tool calls to show tool badges
-            const toolCallMsgs = msgs.filter(m => m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0)
-            if (toolCallMsgs.length > 0) {
-              const badges = toolCallMsgs.flatMap(m => m.toolCalls.map(tc => ({
-                name: tc.function?.name || tc.name || 'Maker API',
-                status: 'done'
-              })))
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, toolCalls: badges }
-                    : msg
-                )
-              )
+            // Isolate messages produced during the CURRENT run (after the current userMessage)
+            const currentUserMsgIdx = msgs.map(m => 
+              m.id === userMessage.id || 
+              (m.role === 'user' && (m.content === userMessage.content || (typeof m.content === 'string' && m.content.trim() === userMessage.content.trim())))
+            ).lastIndexOf(true)
+
+            let currentRunMsgs = []
+            if (currentUserMsgIdx >= 0) {
+              currentRunMsgs = msgs.slice(currentUserMsgIdx + 1)
+            } else {
+              const hasUserMessages = msgs.some(m => m.role === 'user')
+              if (!hasUserMessages) {
+                currentRunMsgs = msgs
+              }
             }
 
-            // Find the assistant response for this run (must be an assistant message, not welcome, with content)
-            const latestAssistant = [...msgs].reverse().find(m => m.role === 'assistant' && m.id !== 'welcome' && m.content)
+            // Extract tool calls to show tool badges for THIS run only
+            const toolCallMsgs = currentRunMsgs.filter(m => 
+              m.role === 'assistant' && 
+              ((Array.isArray(m.toolCalls) && m.toolCalls.length > 0) || 
+               (Array.isArray(m.tool_calls) && m.tool_calls.length > 0))
+            )
+            if (toolCallMsgs.length > 0) {
+              const badges = toolCallMsgs.flatMap(m => {
+                const calls = m.toolCalls || m.tool_calls || []
+                return calls.map(tc => ({
+                  id: tc.id || tc.tool_call_id,
+                  name: getToolName(tc) || 'tool',
+                  status: 'done'
+                }))
+              }).filter(b => b.name)
+
+              if (badges.length > 0) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, toolCalls: badges }
+                      : msg
+                  )
+                )
+              }
+            }
+
+            // Find the assistant response for THIS run only
+            const latestAssistant = [...currentRunMsgs].reverse().find(m => m.role === 'assistant' && m.content)
             if (latestAssistant && latestAssistant.content) {
               const textContent = typeof latestAssistant.content === 'string' 
                 ? latestAssistant.content 
@@ -232,23 +276,46 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
 
           // 3. Tool calls started
           if (eventType === 'TOOL_CALL_START' || data.type === 'TOOL_CALL_START' || eventType === 'TOOL_CALL_STARTED') {
-            const toolName = data.name || data.toolName || data.tool_name || 'Maker API'
+            const toolCallId = data.tool_call_id || data.toolCallId || data.id
+            const rawName = getToolName(data)
+            const toolName = rawName || 'tool'
             setCurrentTool(toolName)
             setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? {
-                      ...msg,
-                      toolCalls: [...(msg.toolCalls || []), { name: toolName, status: 'running' }],
-                    }
-                  : msg
-              )
+              prev.map((msg) => {
+                if (msg.id !== assistantMessageId) return msg
+                const existing = msg.toolCalls || []
+                if (toolCallId && existing.some(tc => tc.id === toolCallId)) {
+                  return msg
+                }
+                return {
+                  ...msg,
+                  toolCalls: [...existing, { id: toolCallId, name: toolName, status: 'running' }],
+                }
+              })
             )
           }
 
           // 4. Tool calls finished
-          if (eventType === 'TOOL_CALL_RESULT' || data.type === 'TOOL_CALL_RESULT' || eventType === 'TOOL_CALL_FINISHED') {
+          if (
+            eventType === 'TOOL_CALL_RESULT' || data.type === 'TOOL_CALL_RESULT' || 
+            eventType === 'TOOL_CALL_END' || data.type === 'TOOL_CALL_END' || 
+            eventType === 'TOOL_CALL_FINISHED'
+          ) {
+            const toolCallId = data.tool_call_id || data.toolCallId || data.id
+            const rawName = getToolName(data)
             setCurrentTool(null)
+            setMessages((prev) =>
+              prev.map((msg) => {
+                if (msg.id !== assistantMessageId) return msg
+                const updated = (msg.toolCalls || []).map(tc => {
+                  if ((toolCallId && tc.id === toolCallId) || (rawName && tc.name === rawName)) {
+                    return { ...tc, status: 'done' }
+                  }
+                  return tc
+                })
+                return { ...msg, toolCalls: updated }
+              })
+            )
             const resultData = data.content || data.result
             if (resultData) {
               try {

@@ -91,3 +91,11 @@ home-agent/
 ├── pyproject.toml                # Root dependencies
 └── .env.example                  # Environment configuration template
 ```
+
+---
+
+## Engineering & Workflow Guidelines
+
+### Fix-Forward Philosophy
+* **Prefer Fix-Forward**: When encountering errors, build mismatches, or unexpected behaviors, always prefer fixing forward rather than rolling back, discarding working tree modifications, or checking out previous commits/versions (`git checkout`, `git restore`).
+* **Preserve Working State**: Never revert or discard unstaged code changes or generated artifacts unless the user explicitly requests a rollback. Investigate issues in place and advance the system state with forward-moving solutions.

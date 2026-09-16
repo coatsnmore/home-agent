@@ -414,9 +414,11 @@ export function useSTT({
     }
 
     turnSubmittedRef.current = false
-    setTranscript('')
-    currentTranscriptRef.current = ''
-    pendingCommandRef.current = ''
+    if (!wakeWordActiveRef.current || !pendingCommandRef.current) {
+      setTranscript('')
+      currentTranscriptRef.current = ''
+      pendingCommandRef.current = ''
+    }
     if (speechPauseTimerRef.current) {
       clearTimeout(speechPauseTimerRef.current)
       speechPauseTimerRef.current = null
@@ -474,8 +476,8 @@ export function useSTT({
       }, 300)
     }
 
-    // Schedules debounced submission waiting for a natural speech pause (1300ms)
-    const scheduleSubmission = (commandText, delayMs = 1300) => {
+    // Schedules debounced submission waiting for a natural speech pause (2500ms after wake word)
+    const scheduleSubmission = (commandText, delayMs = null) => {
       if (turnSubmittedRef.current) return
       const trimmed = String(commandText || '').trim()
       if (!trimmed || isWakeWordOnly(trimmed, wakeWordsRef.current) || !isValidHumanSpeech(trimmed)) {
@@ -488,9 +490,11 @@ export function useSTT({
         clearTimeout(speechPauseTimerRef.current)
       }
 
+      const effectiveDelay = delayMs ?? ((isWakeWordModeRef.current && wakeWordActiveRef.current) ? 2500 : 1800)
+
       speechPauseTimerRef.current = setTimeout(() => {
         commitSubmission(pendingCommandRef.current)
-      }, delayMs)
+      }, effectiveDelay)
     }
 
     // Evaluates a candidate speech transcript against wake-word or direct command rules
@@ -520,7 +524,7 @@ export function useSTT({
           if (isValidHumanSpeech(commandToSubmit)) {
             setTranscript(commandToSubmit)
             currentTranscriptRef.current = commandToSubmit
-            scheduleSubmission(commandToSubmit, 1300)
+            scheduleSubmission(commandToSubmit, 2500)
             return true
           }
           return false
@@ -539,19 +543,19 @@ export function useSTT({
 
           if (wakeWordTimeoutRef.current) clearTimeout(wakeWordTimeoutRef.current)
           wakeWordTimeoutRef.current = setTimeout(() => {
-            console.log('[STT] Wake word listening window timed out after 8s')
+            console.log('[STT] Wake word listening window timed out after 12s')
             wakeWordActiveRef.current = false
             if (isContinuousRef.current && isWakeWordModeRef.current) {
               startRecordingTurn()
             }
-          }, 8000)
+          }, 12000)
 
           if (match.command && isValidHumanSpeech(match.command) && !isWakeWordOnly(match.command, wakeWordsRef.current)) {
             // Wake word + command in same utterance: e.g. "Skeletron, turn on the lights"
             console.log('[STT] Command found with wake word, scheduling after natural pause:', match.command)
             setTranscript(match.command)
             currentTranscriptRef.current = match.command
-            scheduleSubmission(match.command, 1300)
+            scheduleSubmission(match.command, 2500)
             return true
           } else {
             // Standalone wake word: e.g. "Skeletron" -> enter active listening window without stopping
@@ -559,6 +563,14 @@ export function useSTT({
             setTranscript('')
             currentTranscriptRef.current = ''
             pendingCommandRef.current = ''
+            if (recognitionRef.current) {
+              try { recognitionRef.current.abort() } catch {}
+            }
+            setTimeout(() => {
+              if (isContinuousRef.current && isWakeWordModeRef.current && wakeWordActiveRef.current) {
+                startRecordingTurn()
+              }
+            }, 100)
             return true
           }
         } else {
@@ -569,7 +581,7 @@ export function useSTT({
         if (isValidHumanSpeech(trimmed)) {
           setTranscript(trimmed)
           currentTranscriptRef.current = trimmed
-          scheduleSubmission(trimmed, 1300)
+          scheduleSubmission(trimmed, 1800)
           return true
         }
         return false
@@ -580,8 +592,10 @@ export function useSTT({
     const SpeechRecognition = !useWhisperFallbackRef.current && (window.SpeechRecognition || window.webkitSpeechRecognition)
     if (SpeechRecognition) {
       try {
+        const isWaitingForWakeWord = isWakeWordModeRef.current && !wakeWordActiveRef.current
         const recognition = new SpeechRecognition()
-        recognition.continuous = false
+        // In active listening, continuous=true allows multi-clause speech without premature cutoff
+        recognition.continuous = !isWaitingForWakeWord
         recognition.interimResults = true
         recognition.maxAlternatives = 1
         recognition.lang = 'en-US'
@@ -682,7 +696,30 @@ export function useSTT({
             return
           }
 
-          // 2. In active wake-word window or direct mode: commit pending command if present
+          // 2. In active wake-word window: DO NOT commit prematurely on breath pauses.
+          // Let the 2500ms silence timer handle the commit after the full silence duration.
+          if (isWakeWordModeRef.current && wakeWordActiveRef.current) {
+            if (speechPauseTimerRef.current) {
+              // Timer is actively counting down the full silence window (2500ms).
+              // Restart recognition immediately so if user speaks more, it appends rather than cuts off!
+              setTimeout(() => {
+                if (isContinuousRef.current && isWakeWordModeRef.current && wakeWordActiveRef.current && !turnSubmittedRef.current) {
+                  startRecordingTurn()
+                }
+              }, 100)
+              return
+            }
+
+            // No timer running yet: keep listening within the 12s active window
+            setTimeout(() => {
+              if (isContinuousRef.current && isWakeWordModeRef.current && wakeWordActiveRef.current && !turnSubmittedRef.current && !hasPermanentSpeechErrorRef.current) {
+                startRecordingTurn()
+              }
+            }, 100)
+            return
+          }
+
+          // 3. In direct mode continuous conversation:
           const candidate = pendingCommandRef.current || (localTranscript && !isWakeWordOnly(localTranscript, wakeWordsRef.current) ? localTranscript : '')
           if (candidate && !isWakeWordOnly(candidate, wakeWordsRef.current) && isValidHumanSpeech(candidate)) {
             commitSubmission(candidate)

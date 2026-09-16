@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Send, RefreshCw } from 'lucide-react'
 import { Header } from './components/Header'
 import { DeviceCard } from './components/DeviceCard'
@@ -8,11 +8,18 @@ import { useAguiChat } from './hooks/useAguiChat'
 import { useSTT } from './hooks/useSTT'
 import { useTTS } from './hooks/useTTS'
 import { useLocation } from './hooks/useLocation'
+import { useRespondingTone } from './hooks/useRespondingTone'
 
 export default function App() {
   const [inputText, setInputText] = useState('')
-  const [isTtsEnabled, setIsTtsEnabled] = useState(false)
+  const [isTtsEnabled, setIsTtsEnabled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('home_agent_tts_enabled') === 'true'
+    }
+    return false
+  })
   const [isOnline, setIsOnline] = useState(false)
+  const inputRef = useRef(null)
 
   const { location: clientLocation } = useLocation()
   const { isSpeaking, speak, cancel: cancelTts } = useTTS()
@@ -23,6 +30,9 @@ export default function App() {
       const next = !prev
       if (!next) {
         cancelTts()
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('home_agent_tts_enabled', String(next))
       }
       return next
     })
@@ -49,12 +59,22 @@ export default function App() {
     clientLocation,
   })
 
+  // Subtle acoustic processing tone while responding if speaker is active
+  useRespondingTone({
+    isStreaming,
+    isTtsEnabled,
+    isSpeaking,
+  })
+
   // Speech to text hook
   const handleTranscriptReady = useCallback((transcript) => {
     if (transcript.trim()) {
       cancelTts() // Stop speaker immediately on audio submission
       sendMessage(transcript)
       setInputText('')
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+      })
     }
   }, [sendMessage, cancelTts])
 
@@ -79,6 +99,13 @@ export default function App() {
       setInputText(transcript)
     }
   }, [transcript])
+
+  // Retain focus in the input box when streaming finishes or on load
+  useEffect(() => {
+    if (!isStreaming) {
+      inputRef.current?.focus()
+    }
+  }, [isStreaming])
 
   // Periodic health check
   useEffect(() => {
@@ -115,8 +142,12 @@ export default function App() {
     e.preventDefault()
     if (!inputText.trim() || isStreaming) return
     cancelTts()
-    sendMessage(inputText)
+    const textToSend = inputText.trim()
     setInputText('')
+    sendMessage(textToSend)
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+    })
   }
 
   return (
@@ -186,12 +217,13 @@ export default function App() {
 
             <div className="input-field-wrapper">
               <input 
+                ref={inputRef}
                 type="text"
-                placeholder={isListening ? 'Listening to speech...' : 'Ask Hubitat Agent or type a command (e.g. "Turn off living room light")...'}
+                placeholder={isListening ? 'Listening to speech...' : isStreaming ? 'Agent is responding...' : 'Ask Hubitat Agent or type a command (e.g. "Turn off living room light")...'}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 className="text-input"
-                disabled={isStreaming}
+                autoFocus
               />
             </div>
 

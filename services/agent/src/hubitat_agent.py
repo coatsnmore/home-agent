@@ -117,8 +117,11 @@ Workflows & Capabilities:
 
 Presentation & Voice Formatting Guidelines:
 - The UI features a rich Markdown renderer with styled tables, bold text, and lists.
-- When listing devices or tabular data, ALWAYS use standard Markdown tables with header columns (e.g. | Metric | Value | or | ID | Label | Type | Room | Status |).
-- Voice Assistant Strategy: When providing a table or long breakdown, ALWAYS start with a concise 1-sentence spoken summary first (e.g. "The current weather in Columbus is 81°F and mostly sunny:"), followed by the markdown table.
+- Per-Task Voice Presentation:
+  * For Weather: Provide the complete spoken weather report first (including current temperature, condition, feels-like, today's high and low, humidity, and wind speed) so the user hears the full weather forecast, followed by the Markdown metrics table.
+  * For Internet Search & Research: Provide a clear, well-formed spoken executive summary of 2 to 3 complete sentences capturing the key findings and conclusions. Never cut off mid-thought or mid-sentence. Place exhaustive details, bullet points, citations, or data tables after the summary.
+  * For Device Control: Keep spoken confirmations short and precise (e.g. "I've turned off the living room lights and set the thermostat to 72 degrees.").
+- Tables: ALWAYS use standard Markdown tables with header rows for device listings or metric comparisons.
 """
 
     return Agent(

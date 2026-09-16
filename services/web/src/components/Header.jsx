@@ -1,7 +1,19 @@
 import React from 'react'
-import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic, MapPin } from 'lucide-react'
+import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic, MapPin, Radio } from 'lucide-react'
+import { ASSISTANT_CONFIG } from '../config/assistantConfig'
 
-export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggleMic, location }) {
+export function Header({ 
+  isOnline, 
+  isTtsEnabled, 
+  onToggleTts, 
+  micState, 
+  onToggleMic, 
+  location, 
+  isWakeWordMode, 
+  onToggleWakeWord 
+}) {
+  const wakeWordName = ASSISTANT_CONFIG.getPrimaryWakeWord()
+
   return (
     <header className="app-header">
       <div className="brand-section">
@@ -24,14 +36,29 @@ export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggle
           </div>
         )}
 
-        <div className="status-pill">
-          <Cpu size={14} color="var(--primary)" />
-          <span>LiteLLM: gpt-oss:20b</span>
-        </div>
-
-        <div className="status-pill">
-          <Sparkles size={14} color="var(--accent-cyan)" />
-          <span>Skill: Hubitat</span>
+        {/* Passive Wake-Word Mode Toggle */}
+        <div 
+          className="status-pill"
+          onClick={onToggleWakeWord}
+          style={{ 
+            cursor: 'pointer',
+            borderColor: isWakeWordMode ? 'var(--accent-cyan)' : undefined,
+            backgroundColor: isWakeWordMode ? 'rgba(6, 182, 212, 0.12)' : undefined,
+            transition: 'all 0.2s ease-in-out'
+          }}
+          title={isWakeWordMode ? `Passive Wake Word active: Say "${wakeWordName}" anytime to control devices` : `Click to enable passive wake-word mode ("${wakeWordName}")`}
+        >
+          {isWakeWordMode ? (
+            <>
+              <span className="status-indicator-dot" style={{ backgroundColor: 'var(--accent-cyan)', boxShadow: '0 0 8px var(--accent-cyan)' }} />
+              <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Wake Word: "{wakeWordName}"</span>
+            </>
+          ) : (
+            <>
+              <Radio size={14} color="var(--text-dim)" />
+              <span style={{ color: 'var(--text-muted)' }}>Wake Word: Off</span>
+            </>
+          )}
         </div>
 
         {/* Microphone Status Indicator */}
@@ -39,9 +66,14 @@ export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggle
           className="status-pill" 
           onClick={onToggleMic} 
           style={{ cursor: 'pointer' }}
-          title="Click to toggle microphone"
+          title={isWakeWordMode ? `Microphone running in passive wake-word mode. Click to toggle active voice mode.` : `Click to toggle microphone`}
         >
-          {micState === 'listening' ? (
+          {micState === 'passive' ? (
+            <>
+              <span className="status-indicator-dot" style={{ backgroundColor: 'var(--accent-cyan)', boxShadow: '0 0 8px var(--accent-cyan)' }} />
+              <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Standby: "{wakeWordName}"</span>
+            </>
+          ) : micState === 'listening' ? (
             <>
               <span className="status-indicator-dot" style={{ backgroundColor: 'var(--accent-red)', boxShadow: '0 0 8px var(--accent-red)' }} />
               <span style={{ color: 'var(--accent-red)', fontWeight: 600 }}>Mic: Listening...</span>
@@ -64,9 +96,19 @@ export function Header({ isOnline, isTtsEnabled, onToggleTts, micState, onToggle
           ) : (
             <>
               <Mic size={14} color="var(--text-dim)" />
-              <span>Mic: Ready</span>
+              <span>Mic: Push to Talk</span>
             </>
           )}
+        </div>
+
+        <div className="status-pill">
+          <Cpu size={14} color="var(--primary)" />
+          <span>LiteLLM: gpt-oss:20b</span>
+        </div>
+
+        <div className="status-pill">
+          <Sparkles size={14} color="var(--accent-cyan)" />
+          <span>Skill: Hubitat</span>
         </div>
 
         <button 

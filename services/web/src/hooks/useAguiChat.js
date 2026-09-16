@@ -52,6 +52,11 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
   const sendMessage = useCallback(async (text) => {
     if (!text || !text.trim() || isStreaming) return
 
+    // Immediately cancel any playing TTS speech on new user submission
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+
     const userMessage = {
       id: `user-${Date.now()}`,
       role: 'user',

@@ -110,6 +110,7 @@ services:
     environment:
       - VITE_AGENT_PROXY=http://hubitat-agent:9002
       - VITE_MCP_PROXY=http://hubitat-mcp:8888
+      - VITE_WAKE_WORD=${VITE_WAKE_WORD:-Skeletron}
     volumes:
       - ./services/web:/app/services/web
       - /app/services/web/node_modules

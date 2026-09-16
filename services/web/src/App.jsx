@@ -52,19 +52,24 @@ export default function App() {
   // Speech to text hook
   const handleTranscriptReady = useCallback((transcript) => {
     if (transcript.trim()) {
+      cancelTts() // Stop speaker immediately on audio submission
       sendMessage(transcript)
+      setInputText('')
     }
-  }, [sendMessage])
+  }, [sendMessage, cancelTts])
 
   const {
     micState,
     isListening,
+    isWakeWordMode,
     transcript,
     volumeLevel,
     errorMessage,
     toggleListening,
+    toggleWakeWordMode,
   } = useSTT({
     onTranscriptReady: handleTranscriptReady,
+    onSpeechStart: cancelTts, // Immediate barge-in: stop speaker as soon as user starts speaking
     isAssistantBusy: isStreaming || isSpeaking,
   })
 
@@ -94,15 +99,17 @@ export default function App() {
 
   // Initial fetch of devices on load
   const refreshDevices = useCallback(() => {
+    cancelTts()
     sendMessage("List all my smart home devices.")
-  }, [sendMessage])
+  }, [sendMessage, cancelTts])
 
   const handleDeviceControl = useCallback((deviceId, command) => {
+    cancelTts()
     updateDeviceOptimistic(deviceId, {
       attributes: [{ name: 'switch', currentValue: command.includes('on') ? 'on' : 'off' }]
     })
     sendMessage(`control device ${deviceId} ${command}`)
-  }, [sendMessage, updateDeviceOptimistic])
+  }, [sendMessage, updateDeviceOptimistic, cancelTts])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -121,6 +128,8 @@ export default function App() {
         micState={micState}
         onToggleMic={toggleListening}
         location={clientLocation}
+        isWakeWordMode={isWakeWordMode}
+        onToggleWakeWord={toggleWakeWordMode}
       />
 
       <main className="dashboard-grid">

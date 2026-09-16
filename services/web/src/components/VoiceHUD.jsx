@@ -1,23 +1,28 @@
 import React from 'react'
 import { Mic, AlertCircle } from 'lucide-react'
+import { ASSISTANT_CONFIG } from '../config/assistantConfig'
 
 export function VoiceHUD({ micState = 'idle', onToggle, volumeLevel = 0, transcript, errorMessage }) {
+  const wakeWord = ASSISTANT_CONFIG.getPrimaryWakeWord()
   const isListening = micState === 'listening'
+  const isPassive = micState === 'passive'
   const isPaused = micState === 'paused'
   const isTranscribing = micState === 'transcribing'
   const isDenied = micState === 'denied' || micState === 'error'
 
   // Dynamic scale based on energy level
-  const pulseScale = 1 + (isListening ? volumeLevel * 0.35 : 0)
+  const pulseScale = 1 + (isListening ? volumeLevel * 0.35 : isPassive ? volumeLevel * 0.15 : 0)
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', position: 'relative' }}>
       <button
         type="button"
-        className={`btn-icon btn-mic ${isListening ? 'recording' : ''}`}
+        className={`btn-icon btn-mic ${isListening ? 'recording' : isPassive ? 'passive' : ''}`}
         onClick={onToggle}
         title={
-          isListening 
+          isPassive
+            ? `Standby: Wake-word "${wakeWord}" active. Say "${wakeWord}..." to control home.`
+            : isListening 
             ? 'Listening... Click to turn off voice mode' 
             : isPaused
             ? 'Answering... Continuous voice mode active (click to turn off)'
@@ -32,11 +37,15 @@ export function VoiceHUD({ micState = 'idle', onToggle, volumeLevel = 0, transcr
           transition: 'transform 0.08s ease-out',
           backgroundColor: isListening 
             ? 'rgba(239, 68, 68, 0.25)' 
+            : isPassive
+            ? 'rgba(6, 182, 212, 0.18)'
             : isPaused 
             ? 'rgba(16, 185, 129, 0.2)' 
             : undefined,
           borderColor: isListening 
             ? 'var(--accent-red)' 
+            : isPassive
+            ? 'var(--accent-cyan)'
             : isPaused 
             ? 'var(--primary)' 
             : isDenied 
@@ -44,6 +53,8 @@ export function VoiceHUD({ micState = 'idle', onToggle, volumeLevel = 0, transcr
             : undefined,
           color: isListening 
             ? 'var(--accent-red)' 
+            : isPassive
+            ? 'var(--accent-cyan)'
             : isPaused 
             ? 'var(--primary)' 
             : isDenied 
@@ -54,6 +65,8 @@ export function VoiceHUD({ micState = 'idle', onToggle, volumeLevel = 0, transcr
         <span className="mic-wave-indicator" />
         {isListening ? (
           <Mic size={20} color="var(--accent-red)" />
+        ) : isPassive ? (
+          <Mic size={20} color="var(--accent-cyan)" />
         ) : isPaused ? (
           <Mic size={20} color="var(--primary)" />
         ) : isDenied ? (

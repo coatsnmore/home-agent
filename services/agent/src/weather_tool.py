@@ -103,15 +103,19 @@ def get_outside_weather(
         high = highs[0] if highs else None
         low = lows[0] if lows else None
 
+        high_str = f"{high}°F" if high is not None else "N/A"
+        low_str = f"{low}°F" if low is not None else "N/A"
+
         response = (
-            f"The current weather in {resolved_location} is {temp}°F and {condition} (feels like {feels}°F).\n\n"
+            f"The current weather in {resolved_location} is {temp}°F and {condition}, with a feels-like temperature of {feels}°F. "
+            f"Today's forecast has a high of {high_str} and a low of {low_str}, with humidity at {humidity}% and wind speeds around {wind} mph.\n\n"
             f"| Metric | Value |\n"
             f"| --- | --- |\n"
             f"| Condition | {condition} |\n"
             f"| Temperature | {temp}°F |\n"
             f"| Feels Like | {feels}°F |\n"
-            f"| Today's High | {high}°F |\n"
-            f"| Today's Low | {low}°F |\n"
+            f"| Today's High | {high_str} |\n"
+            f"| Today's Low | {low_str} |\n"
             f"| Humidity | {humidity}% |\n"
             f"| Wind Speed | {wind} mph |"
         )

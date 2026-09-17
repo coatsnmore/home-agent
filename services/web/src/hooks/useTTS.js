@@ -49,9 +49,40 @@ export function cleanTextForSpeech(rawText) {
     }
   }
 
-  // 4. Strip markdown tables
-  text = text.replace(/^[ \t]*\|.*\|[ \t]*$/gm, '')
-  text = text.replace(/\|/g, ' ')
+  // 4. Convert markdown tables into natural spoken sentences (events, schedules, movies, devices)
+  const tableRegex = /((?:^[ \t]*\|.*\|[ \t]*(?:\r?\n)?)+)/gm
+  text = text.replace(tableRegex, (match) => {
+    // If weather supplement was already generated for weather metrics table, don't repeat
+    if (isWeather && weatherSpokenSupplement) return ''
+
+    const lines = match.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    if (lines.length < 2) return ''
+
+    const parseRow = (line) => {
+      return line.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+    }
+    const isSeparator = (line) => /^\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)*\|?$/.test(line)
+
+    const headerCells = parseRow(lines[0])
+    const dataLines = lines.slice(1).filter(l => !isSeparator(l))
+    if (dataLines.length === 0) return ''
+
+    const isMetricTable = headerCells.length === 2 &&
+      /^(metric|attribute|setting|parameter)$/i.test(headerCells[0]) &&
+      /^(value|reading|status)$/i.test(headerCells[1])
+
+    // Verbalize up to 5 table rows so speech is comprehensive without dragging on indefinitely
+    const spokenRows = dataLines.slice(0, 5).map(line => {
+      const cells = parseRow(line).filter(c => c && c !== '-' && c !== 'N/A')
+      if (cells.length === 0) return null
+      if (isMetricTable && cells.length >= 2) {
+        return `${cells[0]} is ${cells[1]}.`
+      }
+      return cells.join(', ') + '.'
+    }).filter(Boolean)
+
+    return '\n' + spokenRows.join(' ') + '\n'
+  })
 
   // 5. Append weather supplement if generated
   if (weatherSpokenSupplement) {
@@ -77,6 +108,7 @@ export function cleanTextForSpeech(rawText) {
   text = text.replace(/°\b/g, ' degrees')
   text = text.replace(/\b(\d+(\.\d+)?)\s*mph\b/gi, '$1 miles per hour')
   text = text.replace(/\b(\d+(\.\d+)?)\s*%/g, '$1 percent')
+  text = text.replace(/&/g, 'and')
 
   // Clean excessive spaces and newlines
   text = text.replace(/\s+/g, ' ').trim()
@@ -109,14 +141,15 @@ export function cleanTextForSpeech(rawText) {
     return speech
   }
 
-  // For Internet Search & General Research:
-  const targetChars = 400
+  // For Events, Schedules, Internet Search & General Research:
+  // Allow up to 750 characters and up to 5 sentences so all listed events/movies are read
+  const targetChars = 750
   const summarySentences = []
   let accumulated = 0
 
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i]
-    if (summarySentences.length === 0 || (accumulated + s.length <= targetChars && summarySentences.length < 3)) {
+    if (summarySentences.length === 0 || (accumulated + s.length <= targetChars && summarySentences.length < 5)) {
       summarySentences.push(s)
       accumulated += s.length + 1
     } else {

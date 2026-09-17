@@ -70,7 +70,7 @@ def execute_code(code: str, timeout: Optional[float] = 60.0) -> str:
         else:
             return f"Execution failed ({duration_ms}ms):\n{stderr}\n\nStdout:\n{stdout}".strip()
 
-    except httpx.ConnectError:
+    except httpx.ConnectError as ce:
         return (
             f"Error: Could not connect to the Code Sandbox Sidecar at {url}. "
             "Ensure the 'code-sandbox' container is running on the Docker network."

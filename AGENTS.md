@@ -6,24 +6,24 @@ This document describes the modern architecture of the Home Agent system.
 
 The system is built on **Strands Agents (v1.55.1+)**, **AG-UI (Agent-User Interaction Protocol)**, **A2UI (Generative UI)**, and **LiteLLM**.
 
-It connects a browser-first interactive React dashboard directly to a specialized Hubitat smart home agent using real-time SSE streaming. Model routing is decoupled through a containerized LiteLLM gateway defaulting to local Ollama.
+It connects a browser-first interactive React dashboard directly to a universal Home Agent using real-time SSE streaming. Model routing is decoupled through a containerized LiteLLM gateway defaulting to local Ollama.
 
 ```mermaid
 graph TD
     User((User)) -->|HTTPS / 443| Nginx[Nginx SSL Proxy]
     Nginx -->|/ | WebUI["Web Dashboard (React + A2UI)"]
-    Nginx -->|/agent| HubitatAgent["Hubitat Agent (Strands + AG-UI)"]
+    Nginx -->|/agent| HomeAgent["Home Agent (Strands + AG-UI)"]
     Nginx -->|/mcp| HubitatMCP["Hubitat MCP Server"]
 
     subgraph "Client-Side Speech (Offline)"
         WebUI --> LocalWhisper["Transformers.js (Whisper STT)"]
-        WebUI --> SpeechSynth["Web Speech Synthesis (TTS)"]
+        WebUI --> SpeechSynth["Web Speech Synthesis / Neural TTS"]
     end
 
-    subgraph "Hubitat Agent Service (:9002)"
-        HubitatAgent --> SkillsPlugin["AgentSkills Plugin (controlling-hubitat)"]
-        HubitatAgent --> MCPClient["Strands MCPClient"]
-        HubitatAgent --> CodeTool["execute_code Tool"]
+    subgraph "Home Agent Service (:9002)"
+        HomeAgent --> SkillsPlugin["AgentSkills Plugin (controlling-hubitat)"]
+        HomeAgent --> MCPClient["Strands MCPClient"]
+        HomeAgent --> CodeTool["execute_code Tool"]
     end
 
     subgraph "Code Execution Sandbox Sidecar (:7777)"
@@ -37,7 +37,7 @@ graph TD
     HubitatMCP -->|Maker API| HubitatHub["Hubitat Elevation Hub"]
 
     subgraph "Model Gateway (:4000)"
-        HubitatAgent -->|OpenAI API| LiteLLM["LiteLLM Container Proxy"]
+        HomeAgent -->|OpenAI API| LiteLLM["LiteLLM Container Proxy"]
         LiteLLM -->|Default| OllamaLocal["Local Ollama (gpt-oss:20b)"]
         LiteLLM -.->|Optional Fallback| CloudModels["OpenRouter / OpenAI"]
     end
@@ -47,7 +47,7 @@ graph TD
 
 ## Key Architectural Components
 
-### 1. Hubitat Agent (`services/agent/src/hubitat_agent.py`)
+### 1. Home Agent (`services/agent/src/home_agent.py`)
 * **Framework**: Strands Agents SDK `v1.55.1`.
 * **Protocol**: **AG-UI Protocol** (`ag-ui-strands`, `ag-ui-protocol`) over Server-Sent Events (SSE). Replaces A2A for client-to-agent communication.
 * **Skills Integration**: Dynamically loads `skills/controlling-hubitat` using the native `AgentSkills` plugin. The agent follows the mandatory 4-step pre-flight sequence (`list_devices` -> `device_details` -> `device_capabilities` -> `control_device`).
@@ -77,26 +77,30 @@ graph TD
 * **AG-UI Client**: Streams agent reasoning deltas, tool execution badges, and device state updates.
 * **A2UI Interactive Cards**: Interactive device widgets (on/off toggles, brightness sliders, sensor badges) that allow direct user control or automated agent control.
 * **Offline Speech-to-Text (STT)**: In-browser Whisper transcription with energy-based Voice Activity Detection (VAD).
-* **Offline Text-to-Speech (TTS)**: Browser-native `SpeechSynthesis` with English voice prioritization and barge-in cancellation.
+* **Offline Neural Text-to-Speech (TTS)**: Hybrid voice architecture with containerized Piper neural TTS sidecar (`en_US-lessac-medium`), dynamic `/tts/health` detection, Web AudioContext playback, and graceful fallback to browser-native `SpeechSynthesis`.
 
 ### 5. Repository Structure
 
 ```text
 home-agent/
+├── docker-compose.yml        # Unified service orchestrator
 ├── docker/
-│   ├── docker-compose.yml        # Unified service orchestrator
 │   ├── litellm_config.yaml       # LiteLLM routing matrix
 │   ├── agent.Dockerfile          # Fast Python/uv container for Agent
 │   ├── sandbox.Dockerfile        # Fast Python/uv container for Code Sandbox
+│   ├── tts.Dockerfile            # Fast Piper neural TTS engine container
 │   ├── web.Dockerfile            # Node container for React frontend
 │   └── nginx/                    # SSL reverse proxy
 ├── services/
-│   ├── agent/                    # Hubitat Strands Agent (FastAPI + AG-UI)
+│   ├── agent/                    # Home Strands Agent (FastAPI + AG-UI)
 │   │   ├── pyproject.toml
+│   │   ├── data/                 # Persistent SQLite telemetry storage
 │   │   └── src/
-│   │       ├── main.py           # AG-UI FastAPI server entrypoint
-│   │       ├── hubitat_agent.py  # Agent and skills definition
+│   │       ├── main.py           # AG-UI FastAPI server entrypoint & telemetry APIs
+│   │       ├── home_agent.py     # Universal agent, skills definition, and telemetry hooks
 │   │       ├── code_tool.py      # Strands execute_code tool
+│   │       ├── telemetry_tool.py # Conversational telemetry tool
+│   │       ├── time_tool.py      # Real-time clock and timezone tool
 │   │       └── weather_tool.py   # Open-Meteo weather tool
 │   ├── sandbox/                  # Code Execution Sandbox Sidecar
 │   │   ├── pyproject.toml
@@ -105,16 +109,22 @@ home-agent/
 │   │   └── src/
 │   │       ├── main.py           # Sandbox FastAPI HTTP service
 │   │       └── runner.py         # Subprocess runner with timeout & caps
+│   ├── tts/                      # Offline Neural TTS Sidecar (Piper Engine)
+│   │   ├── pyproject.toml
+│   │   ├── voices/               # Cached ONNX voice models
+│   │   └── src/
+│   │       └── main.py           # OpenAI-compatible /v1/audio/speech endpoint
 │   └── web/                      # React 19 Web Dashboard
 │       ├── package.json
 │       ├── vite.config.js
 │       └── src/
-│           ├── components/       # DeviceCard, ChatStream, VoiceHUD, Header
+│           ├── components/       # TelemetryHUD, DeviceCard, ChatStream, VoiceHUD, Header
 │           ├── hooks/            # useAguiChat, useSTT, useTTS
 │           └── styles/           # Design tokens and glassmorphism styling
 ├── skills/
 │   └── controlling-hubitat/      # SKILL.md rules for Hubitat Elevation
 ├── AGENTS.md                     # Architecture documentation
+├── README.md                     # Comprehensive user and architectural guide
 ├── pyproject.toml                # Root dependencies
 └── .env.example                  # Environment configuration template
 ```

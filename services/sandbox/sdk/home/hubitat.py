@@ -255,6 +255,198 @@ class HubitatClient:
                 return res.json()
         return self._call_mcp_sync("device_history", {"device_id": str(device_id)})
 
+    def device_events(self, device_id: Union[int, str], days: float = 1.0) -> List[Dict[str, Any]]:
+        """Get event history for a device filtered within the specified number of days."""
+        raw_events = self.device_history(device_id)
+        if not raw_events or not isinstance(raw_events, list):
+            return []
+        
+        import datetime
+        from dateutil import parser as dt_parser
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        filtered = []
+        for ev in raw_events:
+            if not isinstance(ev, dict):
+                continue
+            date_str = ev.get("date") or ev.get("timestamp")
+            if date_str:
+                try:
+                    dt = dt_parser.parse(str(date_str))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    if dt >= cutoff:
+                        filtered.append(ev)
+                except Exception:
+                    filtered.append(ev)
+            else:
+                filtered.append(ev)
+        return filtered
+
+    def get_metric_dataframe(
+        self,
+        device_ids: Union[int, str, List[Union[int, str]]],
+        attribute: str = "temperature",
+        days: float = 1.0,
+    ):
+        """Build a clean pandas DataFrame from historical events for one or more devices.
+        
+        Returns a DataFrame with columns: ['timestamp', 'device_id', 'device_name', 'attribute', 'value', 'unit']
+        """
+        import pandas as pd
+        from dateutil import parser as dt_parser
+        
+        if not isinstance(device_ids, list):
+            device_ids = [device_ids]
+            
+        all_rows = []
+        for did in device_ids:
+            events = self.device_events(did, days=days)
+            # Fetch device name
+            d_name = f"Device {did}"
+            try:
+                details = self.device_details(did)
+                d_name = details.get("label") or details.get("name") or d_name
+            except Exception:
+                pass
+                
+            attr_clean = attribute.strip().lower()
+            for ev in events:
+                ev_name = str(ev.get("name", "")).strip().lower()
+                if ev_name == attr_clean:
+                    val = ev.get("value")
+                    try:
+                        val_num = float(val)
+                    except (ValueError, TypeError):
+                        val_num = val
+                        
+                    date_val = ev.get("date") or ev.get("timestamp")
+                    try:
+                        dt = dt_parser.parse(str(date_val))
+                    except Exception:
+                        dt = pd.NaT
+                        
+                    all_rows.append({
+                        "timestamp": dt,
+                        "device_id": str(did),
+                        "device_name": d_name,
+                        "attribute": ev.get("name"),
+                        "value": val_num,
+                        "unit": ev.get("unit", ""),
+                    })
+                    
+        if not all_rows:
+            return pd.DataFrame(columns=["timestamp", "device_id", "device_name", "attribute", "value", "unit"])
+            
+        df = pd.DataFrame(all_rows)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values(by="timestamp").reset_index(drop=True)
+        return df
+
+    def temperature_summary(
+        self,
+        device_ids: Optional[List[Union[int, str]]] = None,
+        days: float = 1.0,
+    ):
+        """Calculate statistical temperature metrics (min, max, delta, mean, std) across rooms."""
+        import pandas as pd
+        
+        if not device_ids:
+            all_devs = self.list_devices()
+            target_ids = []
+            for d in all_devs:
+                did = d.get("id")
+                try:
+                    caps = self.device_capabilities(did)
+                    if "temperature" in caps or "temperaturemeasurement" in caps:
+                        target_ids.append(did)
+                except Exception:
+                    pass
+            device_ids = target_ids
+            
+        if not device_ids:
+            return pd.DataFrame(columns=["device_name", "current", "min", "max", "delta", "mean", "std"])
+            
+        df = self.get_metric_dataframe(device_ids, attribute="temperature", days=days)
+        if df.empty:
+            return pd.DataFrame(columns=["device_name", "current", "min", "max", "delta", "mean", "std"])
+            
+        summaries = []
+        for name, group in df.groupby("device_name"):
+            numeric_vals = pd.to_numeric(group["value"], errors="coerce").dropna()
+            if numeric_vals.empty:
+                continue
+            cur = numeric_vals.iloc[-1]
+            mn = numeric_vals.min()
+            mx = numeric_vals.max()
+            delta = mx - mn
+            mean_val = numeric_vals.mean()
+            std_val = numeric_vals.std() if len(numeric_vals) > 1 else 0.0
+            
+            summaries.append({
+                "device_name": name,
+                "current": round(cur, 1),
+                "min": round(mn, 1),
+                "max": round(mx, 1),
+                "delta": round(delta, 1),
+                "mean": round(mean_val, 1),
+                "std": round(std_val, 2),
+            })
+            
+        return pd.DataFrame(summaries).sort_values(by="delta", ascending=False).reset_index(drop=True)
+
+    def energy_consumption(
+        self,
+        device_ids: Optional[List[Union[int, str]]] = None,
+        days: float = 7.0,
+    ):
+        """Integrate power wattage readings into kilowatt-hours (kWh) consumed."""
+        import pandas as pd
+        
+        if not device_ids:
+            all_devs = self.list_devices()
+            target_ids = []
+            for d in all_devs:
+                did = d.get("id")
+                try:
+                    caps = self.device_capabilities(did)
+                    if "power" in caps or "powermeter" in caps:
+                        target_ids.append(did)
+                except Exception:
+                    pass
+            device_ids = target_ids
+            
+        if not device_ids:
+            return pd.DataFrame(columns=["device_name", "total_kwh", "avg_watts", "peak_watts"])
+            
+        df = self.get_metric_dataframe(device_ids, attribute="power", days=days)
+        if df.empty:
+            return pd.DataFrame(columns=["device_name", "total_kwh", "avg_watts", "peak_watts"])
+            
+        results = []
+        for name, group in df.groupby("device_name"):
+            group = group.sort_values(by="timestamp").dropna(subset=["value"])
+            vals = pd.to_numeric(group["value"], errors="coerce").dropna()
+            if vals.empty:
+                continue
+                
+            total_kwh = 0.0
+            if len(group) >= 2:
+                dt_hours = group["timestamp"].diff().dt.total_seconds().iloc[1:] / 3600.0
+                avg_p = (vals.iloc[:-1].values + vals.iloc[1:].values) / 2.0
+                valid_mask = (dt_hours <= 12.0) & (dt_hours >= 0.0)
+                total_kwh = float((avg_p[valid_mask] * dt_hours[valid_mask].values).sum() / 1000.0)
+            else:
+                total_kwh = float((vals.mean() * (days * 24)) / 1000.0)
+                
+            results.append({
+                "device_name": name,
+                "total_kwh": round(total_kwh, 3),
+                "avg_watts": round(vals.mean(), 1),
+                "peak_watts": round(vals.max(), 1),
+            })
+            
+        return pd.DataFrame(results).sort_values(by="total_kwh", ascending=False).reset_index(drop=True)
+
     # --- Asynchronous Methods ---
 
     async def a_list_devices(self) -> List[Dict[str, Any]]:

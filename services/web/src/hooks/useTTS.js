@@ -89,7 +89,6 @@ export function cleanTextForSpeech(rawText) {
 
   // 10. Per-Task Execution
   if (isWeather) {
-    // For weather: Speak the complete report without arbitrary truncation
     const weatherSentences = []
     let totalLen = 0
     for (const s of sentences) {
@@ -103,8 +102,6 @@ export function cleanTextForSpeech(rawText) {
   }
 
   // For Internet Search & General Research:
-  // Deliver a clear, complete executive summary (up to 3 complete sentences, ~400 chars)
-  // NEVER cut off in the middle of a sentence
   const targetChars = 400
   const summarySentences = []
   let accumulated = 0
@@ -125,16 +122,49 @@ export function cleanTextForSpeech(rawText) {
 }
 
 /**
- * Offline-first browser Text-to-Speech hook utilizing Web Speech API
- * with automatic markdown table summarization and instant mute support.
+ * Hybrid Text-to-Speech hook:
+ * Prioritizes containerized Piper Neural TTS for natural, high-fidelity offline voice,
+ * with instantaneous automatic fallback to browser Web Speech API (SpeechSynthesis).
  */
 export function useTTS(options = {}) {
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isNeuralAvailable, setIsNeuralAvailable] = useState(false)
   const [voices, setVoices] = useState([])
   const [selectedVoice, setSelectedVoice] = useState(null)
-  const utteranceRef = useRef(null)
 
-  // Load available voices on mount
+  const utteranceRef = useRef(null)
+  const audioContextRef = useRef(null)
+  const activeSourceRef = useRef(null)
+  const abortControllerRef = useRef(null)
+
+  // Probe neural TTS sidecar availability
+  useEffect(() => {
+    let mounted = true
+    const probeNeuralTts = async () => {
+      try {
+        const res = await fetch('/tts/health', { signal: AbortSignal.timeout(2500) })
+        if (res.ok) {
+          const data = await res.json()
+          if (mounted) {
+            setIsNeuralAvailable(data.is_ready === true || data.status === 'healthy')
+          }
+        } else if (mounted) {
+          setIsNeuralAvailable(false)
+        }
+      } catch {
+        if (mounted) setIsNeuralAvailable(false)
+      }
+    }
+
+    probeNeuralTts()
+    const interval = setInterval(probeNeuralTts, 15000)
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
+  }, [])
+
+  // Load browser speech voices on mount
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
 
@@ -142,7 +172,6 @@ export function useTTS(options = {}) {
       const availableVoices = window.speechSynthesis.getVoices()
       setVoices(availableVoices)
       
-      // Auto-select preferred natural English voice
       if (!selectedVoice && availableVoices.length > 0) {
         const preferred = availableVoices.find(v => 
           v.name.includes('Samantha') || 
@@ -162,24 +191,36 @@ export function useTTS(options = {}) {
     }
   }, [selectedVoice])
 
+  // Instant mute / cancellation
   const cancel = useCallback(() => {
+    // Abort ongoing neural fetch if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+
+    // Stop active Web Audio source
+    if (activeSourceRef.current) {
+      try {
+        activeSourceRef.current.stop()
+        activeSourceRef.current.disconnect()
+      } catch {}
+      activeSourceRef.current = null
+    }
+
+    // Cancel browser SpeechSynthesis
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel()
-      setIsSpeaking(false)
     }
+
+    setIsSpeaking(false)
   }, [])
 
-  const speak = useCallback((rawText, opts = {}) => {
+  // Browser SpeechSynthesis fallback execution
+  const speakBrowserFallback = useCallback((cleanSpeech, opts = {}) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      console.warn('SpeechSynthesis is not supported in this browser.')
       return Promise.resolve()
     }
-
-    // Prepare concise spoken text
-    const cleanSpeech = cleanTextForSpeech(rawText)
-    if (!cleanSpeech || cleanSpeech.trim().length === 0) return Promise.resolve()
-
-    cancel()
 
     return new Promise((resolve, reject) => {
       try {
@@ -201,7 +242,6 @@ export function useTTS(options = {}) {
         }
         utterance.onerror = (err) => {
           setIsSpeaking(false)
-          // Don't reject on intentional cancel
           if (err.error === 'canceled' || err.error === 'interrupted') {
             resolve()
           } else {
@@ -215,12 +255,95 @@ export function useTTS(options = {}) {
         reject(e)
       }
     })
-  }, [cancel, options, selectedVoice])
+  }, [options, selectedVoice])
+
+  // Primary speak method with neural pipeline + browser fallback
+  const speak = useCallback(async (rawText, opts = {}) => {
+    const cleanSpeech = cleanTextForSpeech(rawText)
+    if (!cleanSpeech || cleanSpeech.trim().length === 0) return Promise.resolve()
+
+    cancel()
+
+    // 1. If Neural TTS is available, attempt neural synthesis
+    if (isNeuralAvailable) {
+      try {
+        abortControllerRef.current = new AbortController()
+        setIsSpeaking(true)
+
+        // Set a 6-second timeout for neural synthesis to ensure instant fallback if container hangs
+        let timedOut = false
+        const timeoutId = setTimeout(() => {
+          timedOut = true
+          if (abortControllerRef.current) abortControllerRef.current.abort()
+        }, 6000)
+
+        let res
+        try {
+          res = await fetch('/tts/v1/audio/speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              input: cleanSpeech,
+              voice: opts.voice || 'en_US-lessac-medium',
+            }),
+            signal: abortControllerRef.current.signal,
+          })
+        } finally {
+          clearTimeout(timeoutId)
+        }
+
+        if (!res.ok) {
+          throw new Error(`Neural TTS returned HTTP ${res.status}`)
+        }
+
+        const arrayBuffer = await res.arrayBuffer()
+        
+        // Initialize or reuse Web AudioContext
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+          audioContextRef.current = new AudioContextClass()
+        }
+
+        const ctx = audioContextRef.current
+        if (ctx.state === 'suspended') {
+          await ctx.resume()
+        }
+
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+        const source = ctx.createBufferSource()
+        source.buffer = audioBuffer
+        source.connect(ctx.destination)
+        activeSourceRef.current = source
+
+        return new Promise((resolve) => {
+          source.onended = () => {
+            setIsSpeaking(false)
+            activeSourceRef.current = null
+            resolve()
+          }
+          source.start(0)
+        })
+      } catch (err) {
+        if (err.name === 'AbortError' && !timedOut) {
+          // User deliberately cancelled or interrupted
+          setIsSpeaking(false)
+          return Promise.resolve()
+        }
+        // If container threw an error or timed out, mark unavailable and fall back immediately
+        setIsNeuralAvailable(false)
+        console.warn('[useTTS] Neural TTS unavailable or timed out, falling back to browser SpeechSynthesis:', err.message)
+      }
+    }
+
+    // 2. Fallback to Native Browser SpeechSynthesis
+    return speakBrowserFallback(cleanSpeech, opts)
+  }, [cancel, isNeuralAvailable, speakBrowserFallback])
 
   return {
     speak,
     cancel,
     isSpeaking,
+    isNeuralAvailable,
     voices,
     selectedVoice,
     setSelectedVoice,

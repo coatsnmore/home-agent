@@ -1,4 +1,4 @@
-# Fast Python container with uv for Hubitat Agent
+# Fast Python container with uv for Home Agent
 FROM astral/uv:python3.12-bookworm-slim
 
 WORKDIR /app

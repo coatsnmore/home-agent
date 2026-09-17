@@ -1,5 +1,6 @@
 """Outdoor weather tool using Open-Meteo and client IP geolocation."""
 
+import time
 from typing import Optional
 import httpx
 from strands import tool
@@ -46,6 +47,7 @@ def get_outside_weather(
         longitude: Optional longitude coordinate.
     """
     resolved_location = location or "Home"
+    start_time = time.perf_counter()
 
     try:
         if latitude is None or longitude is None:
@@ -119,6 +121,7 @@ def get_outside_weather(
             f"| Humidity | {humidity}% |\n"
             f"| Wind Speed | {wind} mph |"
         )
+
         return response
 
     except Exception as e:

@@ -17,13 +17,17 @@ def get_current_datetime(timezone: Optional[str] = None) -> str:
     Args:
         timezone: Optional IANA timezone string (e.g. 'America/New_York', 'US/Eastern', 'UTC'). If omitted, uses local system timezone.
     """
+    start_time = datetime.datetime.now()
     try:
         tz = zoneinfo.ZoneInfo(timezone) if timezone else None
     except Exception:
         tz = None
 
     now = datetime.datetime.now(tz)
-    return (
+    result = (
         f"Today is {now.strftime('%A, %B %d, %Y')}. "
         f"The current time is {now.strftime('%I:%M:%S %p')} {now.strftime('%Z').strip()}."
     )
+    
+
+    return result

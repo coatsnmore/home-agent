@@ -313,6 +313,17 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
               // Strip any <think> tags if leaked into content
               textContent = textContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
+              // Detect if model emitted raw JSON tool call arguments instead of natural language
+              if (/^\s*\{[\s\S]*\}\s*$/.test(textContent)) {
+                try {
+                  const parsed = JSON.parse(textContent)
+                  if (parsed && typeof parsed === 'object' && (parsed.url || parsed.query || parsed.max_results || parsed.device_id || parsed.command || parsed.location || parsed.max_length)) {
+                    fullReasoningText += (fullReasoningText ? '\n' : '') + `[Internal tool call parameters]: ${textContent}`
+                    textContent = ''
+                  }
+                } catch {}
+              }
+
               if (textContent) {
                 fullAssistantText = textContent
                 setMessages((prev) =>
@@ -443,6 +454,23 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
             }
           }
         })
+      }
+
+      // Sanitize fullAssistantText if it is raw JSON tool parameters
+      if (/^\s*\{[\s\S]*\}\s*$/.test(fullAssistantText.trim())) {
+        try {
+          const parsed = JSON.parse(fullAssistantText.trim())
+          if (parsed && typeof parsed === 'object' && (parsed.url || parsed.query || parsed.max_results || parsed.command || parsed.device_id || parsed.max_length)) {
+            fullAssistantText = "I found recent search listings for your query, but could not retrieve additional external website details directly. Please refer to the search results or the official website."
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, content: fullAssistantText }
+                  : msg
+              )
+            )
+          }
+        } catch {}
       }
 
       if (onAssistantResponse && fullAssistantText.trim()) {

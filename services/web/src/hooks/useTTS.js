@@ -14,6 +14,14 @@ export function cleanTextForSpeech(rawText) {
   // 1. Remove thinking / internal tags if any
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '')
 
+  // Drop raw JSON tool payloads if leaked into chat text
+  if (/^\s*\{[\s\S]*\}\s*$/.test(text)) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') return ''
+    } catch {}
+  }
+
   // 2. Identify task type
   const isWeather = /\b(weather|temperature|forecast|feels like|today's high|wind speed)\b/i.test(text)
 

@@ -25,7 +25,7 @@ The Hubitat MCP server provides 6 primary tools backed by the Hubitat Maker API:
 | `device_history(device_id)` | Returns recent event history for a device | `device_id` (string/int) |
 | `control_device(device_id, command)` | Sends an action command to a device | `device_id`, `command` |
 
-For full endpoint mapping and attribute schemas, consult [references/hubitat_api.md](file:///Users/nicholascoats/.agents/skills/controlling-hubitat/references/hubitat_api.md).
+For full endpoint mapping and attribute schemas, consult [references/hubitat_api.md](references/hubitat_api.md).
 
 ---
 

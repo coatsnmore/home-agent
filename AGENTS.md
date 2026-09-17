@@ -77,26 +77,30 @@ graph TD
 * **AG-UI Client**: Streams agent reasoning deltas, tool execution badges, and device state updates.
 * **A2UI Interactive Cards**: Interactive device widgets (on/off toggles, brightness sliders, sensor badges) that allow direct user control or automated agent control.
 * **Offline Speech-to-Text (STT)**: In-browser Whisper transcription with energy-based Voice Activity Detection (VAD).
-* **Offline Text-to-Speech (TTS)**: Browser-native `SpeechSynthesis` with English voice prioritization and barge-in cancellation.
+* **Offline Neural Text-to-Speech (TTS)**: Hybrid voice architecture with containerized Piper neural TTS sidecar (`en_US-lessac-medium`), dynamic `/tts/health` detection, Web AudioContext playback, and graceful fallback to browser-native `SpeechSynthesis`.
 
 ### 5. Repository Structure
 
 ```text
 home-agent/
+├── docker-compose.yml        # Unified service orchestrator
 ├── docker/
-│   ├── docker-compose.yml        # Unified service orchestrator
 │   ├── litellm_config.yaml       # LiteLLM routing matrix
 │   ├── agent.Dockerfile          # Fast Python/uv container for Agent
 │   ├── sandbox.Dockerfile        # Fast Python/uv container for Code Sandbox
+│   ├── tts.Dockerfile            # Fast Piper neural TTS engine container
 │   ├── web.Dockerfile            # Node container for React frontend
 │   └── nginx/                    # SSL reverse proxy
 ├── services/
 │   ├── agent/                    # Home Strands Agent (FastAPI + AG-UI)
 │   │   ├── pyproject.toml
+│   │   ├── data/                 # Persistent SQLite telemetry storage
 │   │   └── src/
-│   │       ├── main.py           # AG-UI FastAPI server entrypoint
-│   │       ├── home_agent.py     # Universal agent and skills definition
+│   │       ├── main.py           # AG-UI FastAPI server entrypoint & telemetry APIs
+│   │       ├── home_agent.py     # Universal agent, skills definition, and telemetry hooks
 │   │       ├── code_tool.py      # Strands execute_code tool
+│   │       ├── telemetry_tool.py # Conversational telemetry tool
+│   │       ├── time_tool.py      # Real-time clock and timezone tool
 │   │       └── weather_tool.py   # Open-Meteo weather tool
 │   ├── sandbox/                  # Code Execution Sandbox Sidecar
 │   │   ├── pyproject.toml
@@ -105,16 +109,22 @@ home-agent/
 │   │   └── src/
 │   │       ├── main.py           # Sandbox FastAPI HTTP service
 │   │       └── runner.py         # Subprocess runner with timeout & caps
+│   ├── tts/                      # Offline Neural TTS Sidecar (Piper Engine)
+│   │   ├── pyproject.toml
+│   │   ├── voices/               # Cached ONNX voice models
+│   │   └── src/
+│   │       └── main.py           # OpenAI-compatible /v1/audio/speech endpoint
 │   └── web/                      # React 19 Web Dashboard
 │       ├── package.json
 │       ├── vite.config.js
 │       └── src/
-│           ├── components/       # DeviceCard, ChatStream, VoiceHUD, Header
+│           ├── components/       # TelemetryHUD, DeviceCard, ChatStream, VoiceHUD, Header
 │           ├── hooks/            # useAguiChat, useSTT, useTTS
 │           └── styles/           # Design tokens and glassmorphism styling
 ├── skills/
 │   └── controlling-hubitat/      # SKILL.md rules for Hubitat Elevation
 ├── AGENTS.md                     # Architecture documentation
+├── README.md                     # Comprehensive user and architectural guide
 ├── pyproject.toml                # Root dependencies
 └── .env.example                  # Environment configuration template
 ```

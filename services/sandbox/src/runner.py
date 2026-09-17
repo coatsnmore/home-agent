@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict
 
 MAX_OUTPUT_BYTES = 16 * 1024  # 16 KB max stdout/stderr cap
-DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TIMEOUT_SECONDS = 60.0
 MAX_TIMEOUT_SECONDS = 180.0
 
 CURRENT_DIR = Path(__file__).resolve().parent

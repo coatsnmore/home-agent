@@ -26,7 +26,7 @@ app.add_middleware(
 
 class ExecuteRequest(BaseModel):
     code: str = Field(..., description="Python script to execute in sandbox")
-    timeout: Optional[float] = Field(20.0, description="Execution timeout in seconds")
+    timeout: Optional[float] = Field(60.0, description="Execution timeout in seconds")
 
 
 class ExecuteResponse(BaseModel):
@@ -52,7 +52,7 @@ async def execute_code(req: ExecuteRequest):
     if not req.code or not req.code.strip():
         raise HTTPException(status_code=400, detail="No code provided for execution.")
 
-    result = await run_python_code(code=req.code, timeout=req.timeout or 20.0)
+    result = await run_python_code(code=req.code, timeout=req.timeout or 60.0)
     return ExecuteResponse(**result)
 
 

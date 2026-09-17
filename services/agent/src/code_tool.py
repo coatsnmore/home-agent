@@ -16,7 +16,7 @@ def get_sandbox_url() -> str:
 
 
 @tool
-def execute_code(code: str, timeout: Optional[float] = 30.0) -> str:
+def execute_code(code: str, timeout: Optional[float] = 60.0) -> str:
     """Execute Python code in an isolated sandbox environment with pre-installed smart home libraries.
 
     Use this tool (Code Mode) when you need to:
@@ -29,11 +29,12 @@ def execute_code(code: str, timeout: Optional[float] = 30.0) -> str:
     Pre-imported modules and helpers available in the sandbox:
     - from home import hubitat, weather, search
       * hubitat.list_devices() -> list[dict]
+      * hubitat.get_lights(query=None) -> list[dict] (filters only controllable lights, excluding sensors/plugs)
       * hubitat.device_details(id) -> dict
-      * hubitat.device_capabilities(id) -> list
-      * hubitat.device_commands(id) -> list
+      * hubitat.device_capabilities(id) -> list[str] (supports case-insensitive check like 'switch' in capabilities)
+      * hubitat.device_commands(id) -> list[str] (supports case-insensitive check like 'on' in commands)
       * hubitat.control_device(id, command, value=None) -> dict
-      * hubitat.set_color(id, hue, saturation=100, level=None) -> dict
+      * hubitat.set_color(id, color, saturation=100, level=None) -> dict (named colors 'blue', 'green', 'warm white' or 0-360° hue)
       * hubitat.device_history(id) -> list[dict]
       * weather.get_weather(location=None) -> dict
       * search.search(query, max_results=5) -> list[dict]
@@ -42,9 +43,9 @@ def execute_code(code: str, timeout: Optional[float] = 30.0) -> str:
 
     Args:
         code: The complete Python script to execute. Be sure to use print() to output results.
-        timeout: Execution timeout in seconds (default: 30s, max: 180s for light animations, loops, or multi-step delays).
+        timeout: Execution timeout in seconds (default: 60s, max: 180s for light animations, loops, or multi-step delays).
     """
-    actual_timeout = min(max(1.0, float(timeout or 30.0)), 180.0)
+    actual_timeout = min(max(1.0, float(timeout or 60.0)), 180.0)
     url = f"{get_sandbox_url()}/execute"
     payload = {
         "code": code,

@@ -54,6 +54,7 @@ def get_llm_model():
 
 from .weather_tool import get_outside_weather
 from .code_tool import execute_code
+from .time_tool import get_current_datetime
 
 
 def create_hubitat_mcp_client() -> MCPClient:
@@ -88,7 +89,7 @@ def create_hubitat_agent(
     mcp_client: Optional[MCPClient] = None,
     ddg_client: Optional[MCPClient] = None,
 ) -> Agent:
-    """Create the Hubitat Strands Agent with Hubitat MCP, DuckDuckGo MCP, Weather, and Code Execution tools."""
+    """Create the Hubitat Strands Agent with Hubitat MCP, DuckDuckGo MCP, Weather, Code Execution, and Time tools."""
     hubitat = mcp_client or create_hubitat_mcp_client()
     ddg = ddg_client or create_duckduckgo_mcp_client()
     plugins = get_agent_plugins()
@@ -117,8 +118,14 @@ Workflows & Capabilities:
      * `from home import hubitat, weather, search`
      * Methods:
        - `hubitat.list_devices()` -> list of all device dicts
+       - `hubitat.get_lights(room_or_query=None)` -> list of controllable light devices ONLY (filters out sensors, plugs, outlets)
        - `hubitat.device_details(id)` -> detailed device state
+       - `hubitat.device_capabilities(id)` -> list of capability names (supports case-insensitive check like `'switch' in hubitat.device_capabilities(id)`)
+       - `hubitat.device_commands(id)` -> list of command names (supports case-insensitive check like `'on' in hubitat.device_commands(id)`)
        - `hubitat.control_device(id, command, secondary_value=None)`
+       - `hubitat.set_color(id, color, saturation=100, level=None)`
+         * Supports named colors: 'blue', 'green', 'red', 'orange', 'yellow', 'purple', 'pink', 'cyan', 'warm white', 'daylight'
+         * Or numeric hue in 0–360° degrees: Red=0, Orange=30, Yellow=60, Green=120, Cyan=180, Blue=240, Purple=280
        - `hubitat.device_history(id)` -> event list
        - `weather.get_weather(location=None)` -> weather dict
        - `search.search(query, max_results=5)` -> list of search results
@@ -135,6 +142,12 @@ Workflows & Capabilities:
 4. Internet Search & Information:
    - Access to DuckDuckGo search tools (search, fetch_content).
    - When asked questions about general facts, news, guides, or external topics, use the search tool to retrieve fresh internet results.
+   - Temporal Anchoring for News: When searching for "latest news", headlines, or current events, ALWAYS include the current real-world year/month (e.g. "latest news September 2026") so search engines return current articles rather than outdated historical archives.
+
+5. Current Real-World Date and Time:
+   - Access to the 'get_current_datetime' tool.
+   - You are continuously provided with the user's real-world current date, day of week, time, and timezone in your context.
+   - NEVER assume an outdated training cutoff year (like 2024). When asked "what day is today?", "what is the date?", or "what time is it?", state the current real-world date and time accurately.
 
 Presentation & Voice Formatting Guidelines:
 - The UI features a rich Markdown renderer with styled tables, bold text, and lists.
@@ -152,9 +165,9 @@ Presentation & Voice Formatting Guidelines:
 
     return Agent(
         name="Hubitat Agent",
-        description="Smart home control, outdoor weather, internet search, and programmatic code execution agent.",
+        description="Smart home control, outdoor weather, internet search, programmatic code execution, and real-time clock agent.",
         system_prompt=system_prompt,
         model=model,
-        tools=[hubitat, ddg, get_outside_weather, execute_code],
+        tools=[hubitat, ddg, get_outside_weather, execute_code, get_current_datetime],
         plugins=plugins,
     )

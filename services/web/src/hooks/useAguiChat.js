@@ -108,6 +108,17 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
 
       // Build AG-UI RunAgentInput payload compliant with ag-ui schema
       const contextItems = []
+
+      // Client Temporal Context (exact current date, day, time, timezone)
+      const now = new Date()
+      const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' })
+      const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
+      contextItems.push({
+        description: 'Current Date and Time',
+        value: `Today is ${dateStr}. The current time is ${timeStr} (${tzName} timezone). Use this current timestamp for any questions about today's date, day of week, or time, and anchor web searches for news/recent events to this year (${now.getFullYear()}) and month.`,
+      })
+
       if (clientLocation) {
         contextItems.push({
           description: 'Client Location',

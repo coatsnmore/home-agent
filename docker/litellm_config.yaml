@@ -19,5 +19,8 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
 
+litellm_settings:
+  drop_params: true
+
 general_settings:
   master_key: sk-home-agent-litellm-key

@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ag_ui_strands import StrandsAgent, create_strands_app, add_strands_fastapi_endpoint
 
-from .hubitat_agent import (
+from .home_agent import (
+    create_home_agent,
     create_hubitat_agent,
     create_hubitat_mcp_client,
     create_duckduckgo_mcp_client,
@@ -20,14 +21,14 @@ load_dotenv()
 # Global instances
 mcp_client = None
 ddg_client = None
-hubitat_agent = None
+home_agent = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage lifecycle of MCP client connections."""
     global mcp_client, ddg_client
-    print("Initializing Hubitat Agent service...")
+    print("Initializing Home Agent service...")
     if mcp_client:
         try:
             mcp_client.__enter__()
@@ -41,7 +42,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"DuckDuckGo MCP Connection notice: {e}")
     yield
-    print("Shutting down Hubitat Agent service...")
+    print("Shutting down Home Agent service...")
     for client in (mcp_client, ddg_client):
         if client:
             try:
@@ -52,18 +53,18 @@ async def lifespan(app: FastAPI):
 
 def build_app() -> FastAPI:
     """Build the AG-UI FastAPI application."""
-    global mcp_client, ddg_client, hubitat_agent
+    global mcp_client, ddg_client, home_agent
     
     mcp_client = create_hubitat_mcp_client()
     ddg_client = create_duckduckgo_mcp_client()
-    hubitat_agent = create_hubitat_agent(mcp_client=mcp_client, ddg_client=ddg_client)
+    home_agent = create_home_agent(mcp_client=mcp_client, ddg_client=ddg_client)
     plugins = get_agent_plugins()
     
     # Wrap agent with AG-UI protocol adapter
     agui_agent = StrandsAgent(
-        agent=hubitat_agent,
-        name="Hubitat Agent",
-        description="Smart home control and monitoring agent for Hubitat Elevation devices.",
+        agent=home_agent,
+        name="Home Agent",
+        description="Universal smart home control, environmental monitoring, and automation agent.",
         plugins=plugins,
     )
     
@@ -84,10 +85,20 @@ def build_app() -> FastAPI:
     async def health_check():
         return {
             "status": "healthy",
-            "service": "hubitat-agent",
+            "service": "home-agent",
             "protocol": "ag-ui",
-            "version": "0.2.0",
+            "version": "0.3.0",
         }
+
+    @app.get("/api/telemetry/stats")
+    async def get_telemetry_metrics(hours: float = 24.0):
+        from .telemetry import get_telemetry_stats
+        return get_telemetry_stats(time_window_hours=hours)
+
+    @app.get("/api/telemetry/recent")
+    async def get_recent_telemetry_executions(limit: int = 50):
+        from .telemetry import get_recent_executions
+        return get_recent_executions(limit=limit)
         
     return app
 
@@ -98,7 +109,7 @@ def main():
     port = int(os.getenv("AGENT_PORT", "9002"))
     app = build_app()
     
-    print(f"Starting Hubitat AG-UI Agent on http://{host}:{port}")
+    print(f"Starting Home Agent AG-UI service on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

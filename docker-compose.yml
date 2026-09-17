@@ -29,13 +29,13 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
     restart: unless-stopped
 
-  # Hubitat Strands Agent with AG-UI, A2UI, and AgentSkills
-  hubitat-agent:
+  # Home Strands Agent with AG-UI, A2UI, and AgentSkills
+  home-agent:
     build:
       context: .
       dockerfile: docker/agent.Dockerfile
-    image: hubitat-agent:latest
-    container_name: hubitat-agent
+    image: home-agent:latest
+    container_name: home-agent
     env_file: 
       - .env
     depends_on:
@@ -125,6 +125,26 @@ services:
       - "7070:7070"
     restart: unless-stopped
 
+  # Local Neural TTS Engine (Piper)
+  tts-engine:
+    build:
+      context: .
+      dockerfile: docker/tts.Dockerfile
+    image: tts-engine:latest
+    container_name: tts-engine
+    networks:
+      - ollama-network
+    ports:
+      - "8001:8001"
+    environment:
+      - TTS_HOST=0.0.0.0
+      - TTS_PORT=8001
+      - DEFAULT_VOICE=en_US-lessac-medium
+    volumes:
+      - ./services/tts:/app/services/tts
+      - ./services/tts/voices:/app/voices
+    restart: unless-stopped
+
   # Modern React + Vite Web Dashboard
   home-page:
     build:
@@ -133,13 +153,13 @@ services:
     image: home-web:latest
     container_name: home-page
     depends_on:
-      - hubitat-agent
+      - home-agent
     networks:
       - ollama-network
     ports:
       - "5173:5173"
     environment:
-      - VITE_AGENT_PROXY=http://hubitat-agent:9002
+      - VITE_AGENT_PROXY=http://home-agent:9002
       - VITE_MCP_PROXY=http://hubitat-mcp:8888
       - VITE_WAKE_WORD=${VITE_WAKE_WORD:-Skeletron}
     volumes:
@@ -155,7 +175,7 @@ services:
     image: nginx-ssl:dev
     container_name: nginx-ssl
     depends_on:
-      - hubitat-agent
+      - home-agent
       - hubitat-mcp
       - home-page
     networks:

@@ -27,9 +27,18 @@ export default defineConfig({
         target: process.env.VITE_AGENT_PROXY || 'http://localhost:9002',
         changeOrigin: true,
       },
+      '/api': {
+        target: process.env.VITE_AGENT_PROXY || 'http://localhost:9002',
+        changeOrigin: true,
+      },
       '/mcp': {
         target: process.env.VITE_MCP_PROXY || 'http://localhost:8888',
         changeOrigin: true,
+      },
+      '/tts': {
+        target: process.env.VITE_TTS_PROXY || 'http://localhost:8001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tts/, ''),
       },
     },
   },

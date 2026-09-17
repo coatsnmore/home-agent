@@ -4,6 +4,7 @@ import { Header } from './components/Header'
 import { DeviceCard } from './components/DeviceCard'
 import { ChatStream } from './components/ChatStream'
 import { VoiceHUD } from './components/VoiceHUD'
+import { TelemetryHUD } from './components/TelemetryHUD'
 import { useAguiChat } from './hooks/useAguiChat'
 import { useSTT } from './hooks/useSTT'
 import { useTTS } from './hooks/useTTS'
@@ -12,6 +13,7 @@ import { useRespondingTone } from './hooks/useRespondingTone'
 
 export default function App() {
   const [inputText, setInputText] = useState('')
+  const [isTelemetryOpen, setIsTelemetryOpen] = useState(false)
   const [isTtsEnabled, setIsTtsEnabled] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('home_agent_tts_enabled') === 'true'
@@ -22,7 +24,7 @@ export default function App() {
   const inputRef = useRef(null)
 
   const { location: clientLocation } = useLocation()
-  const { isSpeaking, speak, cancel: cancelTts } = useTTS()
+  const { isSpeaking, speak, cancel: cancelTts, isNeuralAvailable } = useTTS()
 
   // Instant mute button toggle
   const handleToggleTts = useCallback(() => {
@@ -156,11 +158,13 @@ export default function App() {
         isOnline={isOnline}
         isTtsEnabled={isTtsEnabled}
         onToggleTts={handleToggleTts}
+        isNeuralTts={isNeuralAvailable}
         micState={micState}
         onToggleMic={toggleListening}
         location={clientLocation}
         isWakeWordMode={isWakeWordMode}
         onToggleWakeWord={toggleWakeWordMode}
+        onOpenTelemetry={() => setIsTelemetryOpen(true)}
       />
 
       <main className="dashboard-grid">
@@ -219,7 +223,7 @@ export default function App() {
               <input 
                 ref={inputRef}
                 type="text"
-                placeholder={isListening ? 'Listening to speech...' : isStreaming ? 'Agent is responding...' : 'Ask Hubitat Agent or type a command (e.g. "Turn off living room light")...'}
+                placeholder={isListening ? 'Listening to speech...' : isStreaming ? 'Agent is responding...' : 'Ask Home Agent or type a command (e.g. "Turn off living room light")...'}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 className="text-input"
@@ -238,6 +242,12 @@ export default function App() {
           </form>
         </section>
       </main>
+
+      {/* Telemetry & Observability HUD Modal */}
+      <TelemetryHUD 
+        isOpen={isTelemetryOpen} 
+        onClose={() => setIsTelemetryOpen(false)} 
+      />
     </div>
   )
 }

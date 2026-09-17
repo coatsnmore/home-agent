@@ -457,7 +457,7 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
                 ...msg,
                 content: msg.content
                   ? `${msg.content}\n\n⚠️ Error: ${err.message}`
-                  : `⚠️ Failed to connect to Hubitat Agent: ${err.message}. Please check if the agent service is running.`,
+                  : `⚠️ Failed to connect to Home Agent: ${err.message}. Please check if the agent service is running.`,
               }
             : msg
         )

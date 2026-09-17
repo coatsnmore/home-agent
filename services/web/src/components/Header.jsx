@@ -1,16 +1,18 @@
 import React from 'react'
-import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic, MapPin, Radio } from 'lucide-react'
+import { Home, Cpu, Sparkles, Volume2, VolumeX, Mic, MapPin, Radio, Activity } from 'lucide-react'
 import { ASSISTANT_CONFIG } from '../config/assistantConfig'
 
 export function Header({ 
   isOnline, 
   isTtsEnabled, 
   onToggleTts, 
+  isNeuralTts,
   micState, 
   onToggleMic, 
   location, 
   isWakeWordMode, 
-  onToggleWakeWord 
+  onToggleWakeWord,
+  onOpenTelemetry,
 }) {
   const wakeWordName = ASSISTANT_CONFIG.getPrimaryWakeWord()
 
@@ -106,18 +108,47 @@ export function Header({
           <span>LiteLLM: gpt-oss:20b</span>
         </div>
 
-        <div className="status-pill">
+        <div className="status-pill" title="Ecosystem: Hubitat Elevation, Weather, Search, Code Sandbox">
           <Sparkles size={14} color="var(--accent-cyan)" />
-          <span>Skill: Hubitat</span>
+          <span>Ecosystem: Active</span>
         </div>
 
         <button 
           className="btn-icon" 
           onClick={onToggleTts} 
-          title={isTtsEnabled ? 'Text-to-Speech Enabled' : 'Text-to-Speech Muted'}
+          title={isTtsEnabled ? (isNeuralTts ? 'Neural TTS Active (Piper)' : 'Browser Speech Active') : 'Text-to-Speech Muted'}
+          style={{ width: '36px', height: '36px', position: 'relative' }}
+        >
+          {isTtsEnabled ? (
+            <>
+              <Volume2 size={16} color={isNeuralTts ? 'var(--accent-cyan)' : 'var(--primary)'} />
+              {isNeuralTts && (
+                <span 
+                  style={{
+                    position: 'absolute',
+                    top: '5px',
+                    right: '5px',
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--accent-cyan)',
+                    boxShadow: '0 0 6px var(--accent-cyan)'
+                  }} 
+                />
+              )}
+            </>
+          ) : (
+            <VolumeX size={16} color="var(--text-dim)" />
+          )}
+        </button>
+
+        <button 
+          className="btn-icon" 
+          onClick={onOpenTelemetry} 
+          title="System Telemetry & Observability"
           style={{ width: '36px', height: '36px' }}
         >
-          {isTtsEnabled ? <Volume2 size={16} color="var(--primary)" /> : <VolumeX size={16} color="var(--text-dim)" />}
+          <Activity size={16} color="var(--accent-cyan)" />
         </button>
 
         <div className="status-pill">

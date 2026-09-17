@@ -1,7 +1,7 @@
 [project]
 name = "home_agent"
-version = "0.2.0"
-description = "Hubitat Smart Home Agent with Strands, AG-UI, A2UI, and LiteLLM"
+version = "0.3.0"
+description = "Universal Home Agent with Strands, AG-UI, A2UI, and LiteLLM"
 requires-python = ">=3.12"
 
 dependencies = [
@@ -17,9 +17,12 @@ dependencies = [
     "mcp>=1.14.0",
     "requests>=2.32.4",
     "httpx>=0.27.0",
+    "pandas>=3.0.5",
+    "tabulate>=0.10.0",
 ]
 
 [project.scripts]
+home-agent = "services.agent.src.main:main"
 hubitat-agent = "services.agent.src.main:main"
 
 [build-system]

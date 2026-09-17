@@ -1,0 +1,17 @@
+[project]
+name = "home-tts-engine"
+version = "0.1.0"
+description = "Fast neural text-to-speech sidecar powered by Piper"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.10.0",
+    "requests>=2.32.4",
+    "piper-tts>=1.2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

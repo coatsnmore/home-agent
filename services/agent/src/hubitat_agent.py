@@ -53,6 +53,7 @@ def get_llm_model():
 
 
 from .weather_tool import get_outside_weather
+from .code_tool import execute_code
 
 
 def create_hubitat_mcp_client() -> MCPClient:
@@ -87,7 +88,7 @@ def create_hubitat_agent(
     mcp_client: Optional[MCPClient] = None,
     ddg_client: Optional[MCPClient] = None,
 ) -> Agent:
-    """Create the Hubitat Strands Agent with Hubitat MCP, DuckDuckGo MCP, and Weather tools."""
+    """Create the Hubitat Strands Agent with Hubitat MCP, DuckDuckGo MCP, Weather, and Code Execution tools."""
     hubitat = mcp_client or create_hubitat_mcp_client()
     ddg = ddg_client or create_duckduckgo_mcp_client()
     plugins = get_agent_plugins()
@@ -106,12 +107,31 @@ Workflows & Capabilities:
      * Step 4 (Control): Call control_device(id, command) using the exact command syntax (e.g. 'on', 'off', 'setLevel/50', 'setHue/<val>').
    - Keep responses concise, helpful, and confirm exact actions taken with device names and current states.
 
-2. Outdoor Weather:
+2. Programmatic Tool Calling (Code Mode):
+   - Access to the 'execute_code' tool, which runs Python code in an isolated sidecar sandbox.
+   - PREFER Code Mode when:
+     * Handling batch or multi-device queries (e.g. "What lights are on downstairs?", "Find all sensors with low battery").
+     * Executing multi-step sequences or conditional automations (e.g. "If temperature is above 75, turn on ceiling fans").
+     * Filtering or aggregating data to avoid dumping massive device lists into context.
+   - Built-in Sandbox Libraries:
+     * `from home import hubitat, weather, search`
+     * Methods:
+       - `hubitat.list_devices()` -> list of all device dicts
+       - `hubitat.device_details(id)` -> detailed device state
+       - `hubitat.control_device(id, command, secondary_value=None)`
+       - `hubitat.device_history(id)` -> event list
+       - `weather.get_weather(location=None)` -> weather dict
+       - `search.search(query, max_results=5)` -> list of search results
+       - `search.fetch_content(url)` -> extracted text string
+     * Available Python libraries: `httpx`, `requests`, `aiohttp`, `pydantic`, `pandas`, `jmespath`, `python-dateutil`, `pytz`, `beautifulsoup4`.
+     * Always print() the final summary or desired result at the end of the script so it is captured in stdout.
+
+3. Outdoor Weather:
    - Access to the 'get_outside_weather' tool.
    - When asked about the weather, temperature outside, rain, or forecast, call get_outside_weather().
    - If no specific location is mentioned, omit the location argument to automatically infer the home client's location.
 
-3. Internet Search & Information:
+4. Internet Search & Information:
    - Access to DuckDuckGo search tools (search, fetch_content).
    - When asked questions about general facts, news, guides, or external topics, use the search tool to retrieve fresh internet results.
 
@@ -126,9 +146,9 @@ Presentation & Voice Formatting Guidelines:
 
     return Agent(
         name="Hubitat Agent",
-        description="Smart home control, outdoor weather, and internet search agent.",
+        description="Smart home control, outdoor weather, internet search, and programmatic code execution agent.",
         system_prompt=system_prompt,
         model=model,
-        tools=[hubitat, ddg, get_outside_weather],
+        tools=[hubitat, ddg, get_outside_weather, execute_code],
         plugins=plugins,
     )

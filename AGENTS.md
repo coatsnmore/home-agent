@@ -23,6 +23,14 @@ graph TD
     subgraph "Hubitat Agent Service (:9002)"
         HubitatAgent --> SkillsPlugin["AgentSkills Plugin (controlling-hubitat)"]
         HubitatAgent --> MCPClient["Strands MCPClient"]
+        HubitatAgent --> CodeTool["execute_code Tool"]
+    end
+
+    subgraph "Code Execution Sandbox Sidecar (:7777)"
+        CodeTool -->|HTTP POST /execute| Sandbox["FastAPI Runner + Home SDK"]
+        Sandbox -->|home.hubitat| HubitatMCP
+        Sandbox -->|home.search| DDGMCP["DuckDuckGo MCP (:7070)"]
+        Sandbox -->|home.weather| WeatherAPI["Open-Meteo API"]
     end
 
     MCPClient -->|Streamable HTTP / 8888| HubitatMCP
@@ -44,17 +52,26 @@ graph TD
 * **Protocol**: **AG-UI Protocol** (`ag-ui-strands`, `ag-ui-protocol`) over Server-Sent Events (SSE). Replaces A2A for client-to-agent communication.
 * **Skills Integration**: Dynamically loads `skills/controlling-hubitat` using the native `AgentSkills` plugin. The agent follows the mandatory 4-step pre-flight sequence (`list_devices` -> `device_details` -> `device_capabilities` -> `control_device`).
 * **Tool Access**:
+  - **Programmatic Tool Calling (Code Mode)**: `execute_code` tool routed to the isolated `code-sandbox` sidecar container. Allows running multi-step scripts, querying dozens of devices, filtering lists, and calculating energy/temperature metrics without polluting model context.
   - **Hubitat Maker API**: Integrates directly with `hubitat-mcp` for device discovery and control without hardcoded IDs.
   - **DuckDuckGo Web Search**: Containerized `duckduckgo-mcp` on port `7070` providing live web queries and article fetching.
   - **Outdoor Weather Tool**: Built-in Open-Meteo tool (`weather_tool.py`) that returns current temperature, feels-like, highs/lows, humidity, and wind in Fahrenheit, inferring location from the web client's detected coordinates.
 * **Clean System Prompt**: Tailored for smart home automation, internet intelligence, and markdown table presentation with spoken summary headers for TTS.
 
-### 2. Model Routing via LiteLLM (`docker/litellm_config.yaml`)
+### 2. Code Execution Sandbox Sidecar (`services/sandbox`)
+* **Runtime**: Fast Python 3.12 container built with `uv` on port `7777`.
+* **Security & Isolation**: Hard process timeouts (`20s`), stdout byte caps (`16KB`), and disabled package installations at runtime (`PIP_NO_INDEX=1`).
+* **Pre-Baked Packages**: Pre-provisioned with `httpx`, `requests`, `aiohttp`, `pydantic`, `pandas`, `jmespath`, `python-dateutil`, `pytz`, `beautifulsoup4`, `lxml`, and `trafilatura`.
+* **Home Helper SDK (`services/sandbox/sdk/home`)**: Injected into the container's `PYTHONPATH`, exposing:
+  - `from home import hubitat, weather, search`
+  - Eliminates model syntax hallucination when querying Maker API or MCP JSON-RPC endpoints.
+
+### 3. Model Routing via LiteLLM (`docker/litellm_config.yaml`)
 * Runs as a lightweight container (`ghcr.io/berriai/litellm:main-latest`) on port `4000`.
 * Default model mapped to `ollama/gpt-oss:20b` running on the host machine (`http://host.docker.internal:11434`).
 * Allows swapping or adding cloud models (OpenRouter, OpenAI, Claude) without modifying any agent code.
 
-### 3. Web Dashboard (`services/web`)
+### 4. Web Dashboard (`services/web`)
 * **Framework**: React 19 + Vite.
 * **Theme**: Modern dark mode with responsive grid, glassmorphic cards, and glowing telemetry indicators.
 * **AG-UI Client**: Streams agent reasoning deltas, tool execution badges, and device state updates.
@@ -62,7 +79,7 @@ graph TD
 * **Offline Speech-to-Text (STT)**: In-browser Whisper transcription with energy-based Voice Activity Detection (VAD).
 * **Offline Text-to-Speech (TTS)**: Browser-native `SpeechSynthesis` with English voice prioritization and barge-in cancellation.
 
-### 4. Repository Structure
+### 5. Repository Structure
 
 ```text
 home-agent/
@@ -70,6 +87,7 @@ home-agent/
 │   ├── docker-compose.yml        # Unified service orchestrator
 │   ├── litellm_config.yaml       # LiteLLM routing matrix
 │   ├── agent.Dockerfile          # Fast Python/uv container for Agent
+│   ├── sandbox.Dockerfile        # Fast Python/uv container for Code Sandbox
 │   ├── web.Dockerfile            # Node container for React frontend
 │   └── nginx/                    # SSL reverse proxy
 ├── services/
@@ -77,7 +95,16 @@ home-agent/
 │   │   ├── pyproject.toml
 │   │   └── src/
 │   │       ├── main.py           # AG-UI FastAPI server entrypoint
-│   │       └── hubitat_agent.py  # Agent and skills definition
+│   │       ├── hubitat_agent.py  # Agent and skills definition
+│   │       ├── code_tool.py      # Strands execute_code tool
+│   │       └── weather_tool.py   # Open-Meteo weather tool
+│   ├── sandbox/                  # Code Execution Sandbox Sidecar
+│   │   ├── pyproject.toml
+│   │   ├── sdk/
+│   │   │   └── home/             # Pre-baked home SDK (hubitat, weather, search)
+│   │   └── src/
+│   │       ├── main.py           # Sandbox FastAPI HTTP service
+│   │       └── runner.py         # Subprocess runner with timeout & caps
 │   └── web/                      # React 19 Web Dashboard
 │       ├── package.json
 │       ├── vite.config.js

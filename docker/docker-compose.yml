@@ -41,6 +41,7 @@ services:
     depends_on:
       - hubitat-mcp
       - duckduckgo-mcp
+      - code-sandbox
       - litellm
     networks:
       - ollama-network
@@ -51,6 +52,7 @@ services:
       - MCP_PORT=8888
       - DDG_MCP_HOST=duckduckgo-mcp
       - DDG_MCP_PORT=7070
+      - SANDBOX_URL=http://code-sandbox:7777
       - LITELLM_URL=http://litellm:4000/v1
       - LITELLM_API_KEY=sk-home-agent-litellm-key
       - LITELLM_MODEL=default-model
@@ -60,6 +62,35 @@ services:
     volumes:
       - ./services/agent:/app/services/agent
       - ./skills:/app/skills
+    restart: unless-stopped
+
+  # Code Execution Sandbox Sidecar (Programmatic Tool Calling)
+  code-sandbox:
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: code-sandbox:latest
+    container_name: code-sandbox
+    env_file:
+      - .env
+    depends_on:
+      - hubitat-mcp
+      - duckduckgo-mcp
+    networks:
+      - ollama-network
+    ports:
+      - "7777:7777"
+    environment:
+      - HUB_HOST=${HUB_HOST}
+      - HUB_ACCESS_TOKEN=${HUB_ACCESS_TOKEN}
+      - MCP_SERVER_HOST=hubitat-mcp
+      - MCP_PORT=8888
+      - DDG_MCP_HOST=duckduckgo-mcp
+      - DDG_MCP_PORT=7070
+      - SANDBOX_HOST=0.0.0.0
+      - SANDBOX_PORT=7777
+    volumes:
+      - ./services/sandbox:/app/services/sandbox
     restart: unless-stopped
 
   # Hubitat Maker API MCP Server

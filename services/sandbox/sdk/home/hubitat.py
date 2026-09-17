@@ -73,25 +73,53 @@ class HubitatClient:
                 return res.json()
         return self._call_mcp_sync("device_commands", {"device_id": str(device_id)})
 
+    def _encode_secondary_value(self, val: Any) -> str:
+        """Properly encode secondary parameter for Maker API URL path."""
+        import json
+        import urllib.parse
+        if isinstance(val, (dict, list)):
+            return urllib.parse.quote(json.dumps(val))
+        return urllib.parse.quote(str(val), safe="")
+
     def control_device(
         self,
         device_id: Union[int, str],
         command: str,
-        secondary_value: Optional[Union[str, int, float]] = None,
+        secondary_value: Optional[Union[str, int, float, dict, list]] = None,
     ) -> Dict[str, Any]:
-        """Send a control command to a device (e.g. 'on', 'off', 'setLevel', 50)."""
+        """Send a control command to a device (e.g. 'on', 'off', 'setLevel', 50, 'setColor', {'hue': 50, 'saturation': 100})."""
         if self.hub_host:
             path = f"devices/{device_id}/{command}"
             if secondary_value is not None:
-                path += f"/{secondary_value}"
+                encoded_val = self._encode_secondary_value(secondary_value)
+                path += f"/{encoded_val}"
             with httpx.Client(timeout=self.timeout) as client:
                 res = client.get(self._maker_url(path))
                 res.raise_for_status()
                 return res.json()
         args = {"device_id": str(device_id), "command": command}
         if secondary_value is not None:
-            args["secondary_value"] = str(secondary_value)
+            import json
+            args["secondary_value"] = json.dumps(secondary_value) if isinstance(secondary_value, (dict, list)) else str(secondary_value)
         return self._call_mcp_sync("control_device", args)
+
+    def set_color(
+        self,
+        device_id: Union[int, str],
+        hue: int,
+        saturation: int = 100,
+        level: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Convenience method to set device color via COLOR_MAP or setHue/setSaturation."""
+        color_map = {"hue": hue, "saturation": saturation}
+        if level is not None:
+            color_map["level"] = level
+        try:
+            return self.control_device(device_id, "setColor", color_map)
+        except Exception:
+            # Fallback to separate setHue and setSaturation commands
+            self.control_device(device_id, "setHue", hue)
+            return self.control_device(device_id, "setSaturation", saturation)
 
     def device_history(self, device_id: Union[int, str]) -> List[Dict[str, Any]]:
         """Get recent event history for a device."""

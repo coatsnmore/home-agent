@@ -173,14 +173,26 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
           if (isContentEvent) {
             const delta = data.delta || (typeof data === 'string' ? data : '')
             if (delta) {
-              fullAssistantText += delta
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, content: fullAssistantText }
-                    : msg
+              // If a tool is currently executing, any text streamed is intermediate monologue; route to reasoning
+              if (currentTool) {
+                fullReasoningText += delta
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, reasoning: fullReasoningText }
+                      : msg
+                  )
                 )
-              )
+              } else {
+                fullAssistantText += delta
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, content: fullAssistantText }
+                      : msg
+                  )
+                )
+              }
             }
           }
 
@@ -228,6 +240,20 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
               }
             }
 
+            // Find any tool messages in this run that returned errors
+            const errorToolCallIds = new Set(
+              currentRunMsgs
+                .filter(m => m.role === 'tool' && (
+                  m.is_error || m.error ||
+                  (typeof m.content === 'string' && (
+                    m.content.startsWith('Error') ||
+                    m.content.startsWith('Execution failed') ||
+                    m.content.includes('timed out')
+                  ))
+                ))
+                .map(m => m.tool_call_id || m.toolCallId || m.id)
+            )
+
             // Extract tool calls to show tool badges for THIS run only
             const toolCallMsgs = currentRunMsgs.filter(m => 
               m.role === 'assistant' && 
@@ -237,11 +263,15 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
             if (toolCallMsgs.length > 0) {
               const badges = toolCallMsgs.flatMap(m => {
                 const calls = m.toolCalls || m.tool_calls || []
-                return calls.map(tc => ({
-                  id: tc.id || tc.tool_call_id,
-                  name: getToolName(tc) || 'tool',
-                  status: 'done'
-                }))
+                return calls.map(tc => {
+                  const id = tc.id || tc.tool_call_id
+                  const hasErr = errorToolCallIds.has(id)
+                  return {
+                    id: id,
+                    name: getToolName(tc) || 'tool',
+                    status: hasErr ? 'error' : 'done'
+                  }
+                })
               }).filter(b => b.name)
 
               if (badges.length > 0) {
@@ -255,13 +285,24 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
               }
             }
 
-            // Find the assistant response for THIS run only
-            const latestAssistant = [...currentRunMsgs].reverse().find(m => m.role === 'assistant' && m.content)
-            if (latestAssistant && latestAssistant.content) {
-              const textContent = typeof latestAssistant.content === 'string' 
-                ? latestAssistant.content 
-                : (latestAssistant.content[0]?.text || '')
-              if (textContent && (!fullAssistantText || textContent.length > fullAssistantText.length)) {
+            // Find the assistant response for THIS run only:
+            // Prioritize the conversational final response (without tool calls) over intermediate steps
+            const finalAssistant = [...currentRunMsgs].reverse().find(m => 
+              m.role === 'assistant' && 
+              m.content && 
+              (!m.toolCalls || m.toolCalls.length === 0) &&
+              (!m.tool_calls || m.tool_calls.length === 0)
+            ) || [...currentRunMsgs].reverse().find(m => m.role === 'assistant' && m.content)
+
+            if (finalAssistant && finalAssistant.content) {
+              let textContent = typeof finalAssistant.content === 'string' 
+                ? finalAssistant.content 
+                : (finalAssistant.content[0]?.text || '')
+
+              // Strip any <think> tags if leaked into content
+              textContent = textContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+
+              if (textContent) {
                 fullAssistantText = textContent
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -280,6 +321,21 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
             const rawName = getToolName(data)
             const toolName = rawName || 'tool'
             setCurrentTool(toolName)
+
+            // If text was streamed prior to this tool call, it was pre-tool internal chatter;
+            // move it to reasoning trace and reset user-facing content so it does not leak.
+            if (fullAssistantText && fullAssistantText.trim()) {
+              fullReasoningText += (fullReasoningText ? '\n' : '') + fullAssistantText.trim()
+              fullAssistantText = ''
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: '', reasoning: fullReasoningText }
+                    : msg
+                )
+              )
+            }
+
             setMessages((prev) =>
               prev.map((msg) => {
                 if (msg.id !== assistantMessageId) return msg
@@ -303,20 +359,28 @@ export function useAguiChat({ endpoint = '/agent', onAssistantResponse, clientLo
           ) {
             const toolCallId = data.tool_call_id || data.toolCallId || data.id
             const rawName = getToolName(data)
+            const resultData = data.content || data.result
+            const isError = Boolean(
+              data.is_error || data.error ||
+              (typeof resultData === 'string' && (
+                resultData.startsWith('Error') || 
+                resultData.startsWith('Execution failed') ||
+                resultData.includes('timed out')
+              ))
+            )
             setCurrentTool(null)
             setMessages((prev) =>
               prev.map((msg) => {
                 if (msg.id !== assistantMessageId) return msg
                 const updated = (msg.toolCalls || []).map(tc => {
                   if ((toolCallId && tc.id === toolCallId) || (rawName && tc.name === rawName)) {
-                    return { ...tc, status: 'done' }
+                    return { ...tc, status: isError ? 'error' : 'done' }
                   }
                   return tc
                 })
                 return { ...msg, toolCalls: updated }
               })
             )
-            const resultData = data.content || data.result
             if (resultData) {
               try {
                 let parsed = typeof resultData === 'string' ? JSON.parse(resultData) : resultData

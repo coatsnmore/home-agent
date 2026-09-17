@@ -16,13 +16,14 @@ def get_sandbox_url() -> str:
 
 
 @tool
-def execute_code(code: str, timeout: Optional[float] = 20.0) -> str:
+def execute_code(code: str, timeout: Optional[float] = 30.0) -> str:
     """Execute Python code in an isolated sandbox environment with pre-installed smart home libraries.
 
     Use this tool (Code Mode) when you need to:
     - Inspect or filter multiple devices at once (e.g. find all lights currently on or battery levels < 20%).
     - Perform conditional or sequential device operations (e.g. turn off all downstairs lights).
     - Perform data processing, summaries, or calculations on device states.
+    - Run timed animations, color cycling, or loops (pass appropriate timeout, up to 180s).
     - Combine multiple data sources (Hubitat + Weather + Search) in a single step.
 
     Pre-imported modules and helpers available in the sandbox:
@@ -32,6 +33,7 @@ def execute_code(code: str, timeout: Optional[float] = 20.0) -> str:
       * hubitat.device_capabilities(id) -> list
       * hubitat.device_commands(id) -> list
       * hubitat.control_device(id, command, value=None) -> dict
+      * hubitat.set_color(id, hue, saturation=100, level=None) -> dict
       * hubitat.device_history(id) -> list[dict]
       * weather.get_weather(location=None) -> dict
       * search.search(query, max_results=5) -> list[dict]
@@ -40,16 +42,17 @@ def execute_code(code: str, timeout: Optional[float] = 20.0) -> str:
 
     Args:
         code: The complete Python script to execute. Be sure to use print() to output results.
-        timeout: Execution timeout in seconds (default: 20s, max: 30s).
+        timeout: Execution timeout in seconds (default: 30s, max: 180s for light animations, loops, or multi-step delays).
     """
+    actual_timeout = min(max(1.0, float(timeout or 30.0)), 180.0)
     url = f"{get_sandbox_url()}/execute"
     payload = {
         "code": code,
-        "timeout": min(max(1.0, float(timeout or 20.0)), 30.0),
+        "timeout": actual_timeout,
     }
 
     try:
-        with httpx.Client(timeout=35.0) as client:
+        with httpx.Client(timeout=actual_timeout + 15.0) as client:
             res = client.post(url, json=payload)
             res.raise_for_status()
             data = res.json()

@@ -28,7 +28,22 @@ export function ChatStream({ messages, isStreaming, currentTool, onControlDevice
                 <div className="tool-call-banner">
                   <Wrench size={13} />
                   <span>Executed: {Array.from(new Set(msg.toolCalls.map(t => t.name).filter(Boolean))).join(', ')}</span>
+                  {msg.toolCalls.some(t => t.status === 'error') && (
+                    <span style={{ marginLeft: '8px', color: '#f87171', fontWeight: 500 }}>
+                      • {Array.from(new Set(msg.toolCalls.filter(t => t.status === 'error').map(t => `Error when calling tool ${t.name}`))).join('; ')}
+                    </span>
+                  )}
                 </div>
+              )}
+
+              {/* Collapsible reasoning / internal thinking trace */}
+              {msg.reasoning && msg.reasoning.trim() && (
+                <details className="reasoning-trace" style={{ marginBottom: '8px', fontSize: '0.8rem', opacity: 0.65 }}>
+                  <summary style={{ cursor: 'pointer', userSelect: 'none' }}>Thought process</summary>
+                  <div style={{ padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: '4px', marginTop: '4px', whiteSpace: 'pre-wrap', maxHeight: '160px', overflowY: 'auto' }}>
+                    {msg.reasoning}
+                  </div>
+                </details>
               )}
 
               {/* Render Rich Markdown for assistant and user */}

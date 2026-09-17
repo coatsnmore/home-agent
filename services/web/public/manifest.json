@@ -1,0 +1,19 @@
+{
+  "name": "Home Agent",
+  "short_name": "Home Agent",
+  "description": "A Progressive Web App for communicating with A2A home automation agents",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#646cff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

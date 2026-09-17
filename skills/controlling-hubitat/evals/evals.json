@@ -1,0 +1,42 @@
+{
+  "skill_name": "controlling-hubitat",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Please turn off the living room lights.",
+      "expected_output": "The agent finds the living room light device, verifies commands/details, and issues the 'off' command to turn off the light.",
+      "files": [],
+      "expectations": [
+        "The agent calls list_devices to discover device IDs rather than assuming an ID",
+        "The agent checks device details or commands before attempting actuation",
+        "The agent executes control_device with command set to 'off'",
+        "The agent informs the user that the living room lights have been turned off"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "What is the temperature and light level in the sunroom right now?",
+      "expected_output": "The agent locates the relevant temperature and light sensor in the sunroom, queries device details, and reports current temperature and illuminance values.",
+      "files": [],
+      "expectations": [
+        "The agent calls list_devices to find the sunroom sensor device",
+        "The agent calls device_details for the sunroom device",
+        "The agent inspects the temperature and illuminance attributes",
+        "The agent reports the temperature and light level in lux without sending any control commands"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Dim the kitchen island light to 40% and set it to a warm white color.",
+      "expected_output": "The agent locates the kitchen island light, checks its capabilities and supported commands for dimming and color temperature, and issues the setLevel and setColorTemp commands.",
+      "files": [],
+      "expectations": [
+        "The agent identifies the kitchen island light device ID via list_devices",
+        "The agent verifies device capabilities or commands for SwitchLevel and ColorTemperature",
+        "The agent executes control_device with 'setLevel/40'",
+        "The agent executes control_device with 'setColorTemp/2700' (or appropriate warm white Kelvin value)",
+        "The agent confirms the updated brightness and color temperature to the user"
+      ]
+    }
+  ]
+}

@@ -12,19 +12,19 @@ The platform runs as a coordinated microservice architecture orchestrated via [d
 
 ```mermaid
 graph TD
-    User((User Browser)) -->|HTTPS / 443| Nginx[Nginx SSL Reverse Proxy]
+    User(("User Browser")) -->|HTTPS / 443| Nginx["Nginx SSL Reverse Proxy"]
 
     %% Web Dashboard Routing
-    Nginx -->|/ (HTTP / Vite HMR)| WebUI["Web Dashboard (:5173)<br/>React 19 + Vite + A2UI"]
-    Nginx -->|/agent & /api (HTTP & SSE)| HomeAgent["Home Agent (:9002)<br/>Strands v1.55 + AG-UI + FastAPI"]
-    Nginx -->|/tts (HTTP REST & WAV)| TTSService["Piper TTS Sidecar (:8001)<br/>FastAPI + ONNX Neural Audio"]
-    Nginx -->|/mcp (HTTP JSON-RPC)| HubitatMCP["Hubitat MCP Server (:8888)<br/>FastMCP Streamable Bridge"]
+    Nginx -->|"Route / (HTTP & Vite HMR)"| WebUI["Web Dashboard (:5173)<br/>React 19 + Vite + A2UI"]
+    Nginx -->|"Route /agent & /api (HTTP & SSE)"| HomeAgent["Home Agent (:9002)<br/>Strands v1.55 + AG-UI + FastAPI"]
+    Nginx -->|"Route /tts (HTTP REST & WAV)"| TTSService["Piper TTS Sidecar (:8001)<br/>FastAPI + ONNX Neural Audio"]
+    Nginx -->|"Route /mcp (HTTP JSON-RPC)"| HubitatMCP["Hubitat MCP Server (:8888)<br/>FastMCP Streamable Bridge"]
 
     %% Client-Side Voice Engine
     subgraph ClientAudio ["In-Browser Audio Engine (Offline)"]
         WebUI --> LocalWhisper["Whisper STT (Transformers.js / ONNX)"]
         WebUI --> AudioContext["Web AudioContext (Neural Piper WAV)"]
-        WebUI -.->|Automatic Fallback| NativeTTS["Web SpeechSynthesis API"]
+        WebUI -.->|"Automatic Fallback"| NativeTTS["Web SpeechSynthesis API"]
     end
 
     %% Agent Core & Tools
@@ -40,27 +40,27 @@ graph TD
 
     %% Code Execution Sandbox
     subgraph SandboxEnv ["Code Sandbox Sidecar (:7777)"]
-        CodeTool -->|HTTP POST /execute| Sandbox["FastAPI Runner + Process Isolation"]
+        CodeTool -->|"HTTP POST /execute"| Sandbox["FastAPI Runner + Process Isolation"]
         Sandbox --> HomeSDK["Home SDK (from home import ...)"]
         HomeSDK --> PandasAnalytics["Pandas 2.0+ & Tabulate<br/>(Energy & Temperature Math)"]
     end
 
     %% MCP Bridges & External APIs
-    HomeAgent -->|MCP Streamable HTTP| HubitatMCP
-    HomeAgent -->|MCP Streamable HTTP| DDGMCP["DuckDuckGo MCP (:7070)"]
-    Sandbox -->|MCP HTTP JSON-RPC| HubitatMCP
-    Sandbox -->|MCP HTTP JSON-RPC| DDGMCP
-    Sandbox -->|HTTPS REST| ExtWeather["Open-Meteo Weather API"]
-    WeatherTool -->|HTTPS REST| ExtWeather
+    HomeAgent -->|"MCP Streamable HTTP"| HubitatMCP
+    HomeAgent -->|"MCP Streamable HTTP"| DDGMCP["DuckDuckGo MCP (:7070)"]
+    Sandbox -->|"MCP HTTP JSON-RPC"| HubitatMCP
+    Sandbox -->|"MCP HTTP JSON-RPC"| DDGMCP
+    Sandbox -->|"HTTPS REST"| ExtWeather["Open-Meteo Weather API"]
+    WeatherTool -->|"HTTPS REST"| ExtWeather
 
     %% Hardware Hub
-    HubitatMCP -->|HTTP REST Maker API| HubitatHub["Hubitat Elevation Hub"]
+    HubitatMCP -->|"HTTP REST Maker API"| HubitatHub["Hubitat Elevation Hub"]
 
     %% Model Gateway
     subgraph ModelRouting ["Decoupled Model Gateway (:4000)"]
-        HomeAgent -->|OpenAI Chat Completions REST| LiteLLM["LiteLLM Proxy Container"]
-        LiteLLM -->|Ollama REST API| Ollama["Local Ollama (:11434)<br/>(gpt-oss:20b / llama3.1)"]
-        LiteLLM -.->|Optional Cloud Fallback| CloudLLM["OpenRouter / OpenAI / Anthropic"]
+        HomeAgent -->|"OpenAI Chat Completions REST"| LiteLLM["LiteLLM Proxy Container"]
+        LiteLLM -->|"Ollama REST API"| Ollama["Local Ollama (:11434)<br/>(gpt-oss:20b / llama3.1)"]
+        LiteLLM -.->|"Optional Cloud Fallback"| CloudLLM["OpenRouter / OpenAI / Anthropic"]
     end
 ```
 
